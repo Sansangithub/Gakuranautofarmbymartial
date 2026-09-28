@@ -19,21 +19,21 @@ local Settings = {
         AutoStart    = true,
 
         -- LOOP
-        RefreshRate  = 0.05,
+        RefreshRate  = 0.08,
 
         -- MOVEMENT
-        TweenSpeed   = 250,
-        MaxDistance  = 0.8,
-        MaxDuration  = 0.25,
-        MinDuration  = 0.03,
+        TweenSpeed   = 180,
+        MaxDistance  = 1.0,
+        MaxDuration  = 0.35,
+        MinDuration  = 0.05,
 
         PhotoRange   = 10,
-        MaxAttempts  = 15,
+        MaxAttempts  = 20,
 
-        -- RESTART
-        RestartDelay   = 0.02,
-        StartDelay     = 0.04,
-        AssignmentWait = 0.04,
+        -- RESTART / REROLL
+        RestartDelay   = 0.04,
+        StartDelay     = 0.07,
+        AssignmentWait = 0.06,
     }
 }
 
