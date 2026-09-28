@@ -1,6 +1,8 @@
 --// Made by @DirectMemoryAccess
 --// Photo Job Farming
 --// WHITELIST AREA ONLY
+--// PLAYER PHOTO = FIND INFO -> REAL PLAYER -> PHOTO
+--// AREA PHOTO = WHITELIST AREA -> PHOTO
 --// MUSIC ROOM = AUTO REROLL
 --// INVALID TASK = STOP -> RESTART -> CHECK AGAIN
 
@@ -27,8 +29,13 @@ local Settings = {
         MaxDuration  = 0.35,
         MinDuration  = 0.05,
 
+        -- PHOTO
         PhotoRange   = 10,
         MaxAttempts  = 20,
+
+        -- PLAYER SEARCH
+        PlayerSearchAttempts = 30,
+        PlayerSearchDelay    = 0.05,
 
         -- RESTART / REROLL
         RestartDelay   = 0.01,
@@ -189,16 +196,19 @@ local photoJobSubmit
 --==================================================
 
 local State = {
-    farming       = false,
-    processing    = false,
-    tweening      = false,
-    restarting    = false,
+    farming      = false,
+    processing   = false,
+    tweening     = false,
+    restarting   = false,
 
-    lastTask      = "",
-    taskCount     = 0,
-    restartCount  = 0,
+    lastTask     = "",
+    taskCount    = 0,
+    restartCount = 0,
 
-    stopReason    = ""
+    stopReason   = "",
+
+    targetPlayer   = "",
+    targetUsername = "",
 }
 
 local currentTween = nil
@@ -327,8 +337,10 @@ local function stopFarming(reason)
             reason or "Stopped"
         )
 
-    cancelTween()
+    State.targetPlayer = ""
+    State.targetUsername = ""
 
+    cancelTween()
     setCollision(true)
 end
 
@@ -353,6 +365,7 @@ local function normalizeText(text)
         "photo of ",
         "photograph of ",
         "photograph ",
+        "get a picture of ",
         "take a picture of ",
         "take picture of ",
         "picture of ",
@@ -387,108 +400,28 @@ local function normalizeText(text)
 end
 
 --==================================================
--- RESOLVE AREA
+-- NORMALIZE PLAYER NAME
 --==================================================
 
-local function resolveArea(taskText)
+local function normalizePlayerName(text)
 
-    local normalized =
-        normalizeText(taskText)
-
-    if normalized == "" then
-        return nil
+    if not text then
+        return ""
     end
 
-    -- Alias matching
-    for _, entry in ipairs(
-        AREA_TASKS
-    ) do
+    text = tostring(text)
 
-        for _, alias in ipairs(
-            entry.aliases
-        ) do
+    text =
+        text:match(
+            "^%s*(.-)%s*$"
+        )
 
-            if normalized == alias then
-                return entry.canonical
-            end
+    text = text:gsub(
+        "[%.,!?:;]+$",
+        ""
+    )
 
-            if normalized:find(
-                alias,
-                1,
-                true
-            ) then
-
-                return entry.canonical
-            end
-        end
-    end
-
-    -- Canonical matching
-    for _, entry in ipairs(
-        AREA_TASKS
-    ) do
-
-        local canonical =
-            entry.canonical:lower()
-
-        if normalized == canonical then
-            return entry.canonical
-        end
-
-        if normalized:find(
-            canonical,
-            1,
-            true
-        ) then
-
-            return entry.canonical
-        end
-    end
-
-    return nil
-end
-
---==================================================
--- CHECK WHITELIST
---==================================================
-
-local function isWhitelistedTask(taskText)
-
-    if not taskText then
-        return false
-    end
-
-    return resolveArea(taskText) ~= nil
-end
-
---==================================================
--- REJECTED TASK
--- MUSIC ROOM ALWAYS REROLL
---==================================================
-
-local function isRejectedTask(taskText)
-
-    if not taskText then
-        return false
-    end
-
-    local normalized =
-        normalizeText(taskText)
-
-    if normalized == "music room" then
-        return true
-    end
-
-    if normalized:find(
-        "music room",
-        1,
-        true
-    ) then
-
-        return true
-    end
-
-    return false
+    return text
 end
 
 --==================================================
@@ -540,6 +473,619 @@ local function getTaskText()
     end
 
     return Task.Text
+end
+
+--==================================================
+-- PHOTO PREFIX DETECTION
+--==================================================
+
+local PHOTO_PREFIXES = {
+    "get a photo of ",
+    "take a photo of ",
+    "take photo of ",
+    "a photo of ",
+    "photo of ",
+    "photograph of ",
+    "photograph ",
+    "get a picture of ",
+    "take a picture of ",
+    "take picture of ",
+    "picture of ",
+}
+
+local function getPhotoTargetText(taskText)
+
+    if not taskText then
+        return nil
+    end
+
+    local text = tostring(taskText)
+    local lower = text:lower()
+
+    for _, prefix in ipairs(PHOTO_PREFIXES) do
+
+        if lower:sub(
+            1,
+            #prefix
+        ) == prefix then
+
+            local target =
+                text:sub(
+                    #prefix + 1
+                )
+
+            target =
+                normalizePlayerName(
+                    target
+                )
+
+            if target ~= "" then
+                return target
+            end
+        end
+    end
+
+    return nil
+end
+
+--==================================================
+-- FIND MODEL FROM INFO LABEL
+--==================================================
+
+local function findModelFromInfo(info)
+
+    if not info then
+        return nil
+    end
+
+    local current =
+        info.Parent
+
+    while current do
+
+        if current:IsA("Model") then
+            return current
+        end
+
+        current =
+            current.Parent
+    end
+
+    return nil
+end
+
+--==================================================
+-- MATCH INFO TEXT
+--==================================================
+
+local function infoMatchesTarget(
+    infoText,
+    targetText,
+    player
+)
+
+    if not infoText
+        or not targetText then
+
+        return false
+    end
+
+    local info =
+        tostring(infoText):lower()
+
+    local target =
+        tostring(targetText):lower()
+
+    if info == target then
+        return true
+    end
+
+    if info:find(
+        target,
+        1,
+        true
+    ) then
+
+        return true
+    end
+
+    if player then
+
+        local username =
+            player.Name:lower()
+
+        local displayName =
+            player.DisplayName:lower()
+
+        if info:find(
+            username,
+            1,
+            true
+        ) then
+
+            return true
+        end
+
+        if info:find(
+            displayName,
+            1,
+            true
+        ) then
+
+            return true
+        end
+    end
+
+    return false
+end
+
+--==================================================
+-- FIND REAL PLAYER FROM MODEL
+--==================================================
+
+local function getRealPlayerFromModel(model)
+
+    if not model then
+        return nil
+    end
+
+    local player =
+        Players:GetPlayerFromCharacter(
+            model
+        )
+
+    if player then
+        return player
+    end
+
+    local modelName =
+        tostring(model.Name):lower()
+
+    for _, candidate in ipairs(
+        Players:GetPlayers()
+    ) do
+
+        if candidate.Name:lower()
+            == modelName then
+
+            return candidate
+        end
+    end
+
+    return nil
+end
+
+--==================================================
+-- FIND PLAYER USING INFO
+--==================================================
+
+local function findPlayerByInfo(
+    targetText
+)
+
+    if not targetText then
+        return nil, nil, nil
+    end
+
+    local target =
+        normalizePlayerName(
+            targetText
+        )
+
+    if target == "" then
+        return nil, nil, nil
+    end
+
+    local targetLower =
+        target:lower()
+
+    --==================================================
+    -- PASS 1
+    -- CURRENT PLAYER CHARACTERS
+    --==================================================
+
+    for _, player in ipairs(
+        Players:GetPlayers()
+    ) do
+
+        if player ~= LocalPlayer then
+
+            local character =
+                player.Character
+
+            if character then
+
+                local info =
+                    character:FindFirstChild(
+                        "Info",
+                        true
+                    )
+
+                if info
+                    and info:IsA(
+                        "TextLabel"
+                    ) then
+
+                    if infoMatchesTarget(
+                        info.Text,
+                        target,
+                        player
+                    ) then
+
+                        local playerHRP =
+                            character:FindFirstChild(
+                                "HumanoidRootPart"
+                            )
+
+                        if playerHRP then
+
+                            return player,
+                                character,
+                                playerHRP.Position
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    --==================================================
+    -- PASS 2
+    -- WORKSPACE INFO SCAN
+    --==================================================
+
+    for _, object in ipairs(
+        Workspace:GetDescendants()
+    ) do
+
+        if object:IsA("TextLabel")
+            and object.Name == "Info" then
+
+            local infoText =
+                tostring(
+                    object.Text or ""
+                )
+
+            if infoText ~= "" then
+
+                local model =
+                    findModelFromInfo(
+                        object
+                    )
+
+                if model then
+
+                    local player =
+                        getRealPlayerFromModel(
+                            model
+                        )
+
+                    if player
+                        and player ~= LocalPlayer then
+
+                        if infoMatchesTarget(
+                            infoText,
+                            target,
+                            player
+                        ) then
+
+                            local playerHRP =
+                                model:FindFirstChild(
+                                    "HumanoidRootPart"
+                                )
+
+                            if playerHRP then
+
+                                return player,
+                                    model,
+                                    playerHRP.Position
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    --==================================================
+    -- PASS 3
+    -- REAL USERNAME / DISPLAY NAME
+    --==================================================
+
+    for _, player in ipairs(
+        Players:GetPlayers()
+    ) do
+
+        if player ~= LocalPlayer then
+
+            if player.Name:lower()
+                == targetLower
+
+                or player.DisplayName:lower()
+                == targetLower then
+
+                local character =
+                    player.Character
+
+                if character then
+
+                    local playerHRP =
+                        character:FindFirstChild(
+                            "HumanoidRootPart"
+                        )
+
+                    if playerHRP then
+
+                        return player,
+                            character,
+                            playerHRP.Position
+                    end
+                end
+            end
+        end
+    end
+
+    return nil, nil, nil
+end
+
+--==================================================
+-- RESOLVE AREA
+--==================================================
+
+local function resolveArea(taskText)
+
+    local normalized =
+        normalizeText(taskText)
+
+    if normalized == "" then
+        return nil
+    end
+
+    for _, entry in ipairs(
+        AREA_TASKS
+    ) do
+
+        -- Canonical
+        local canonical =
+            entry.canonical:lower()
+
+        if normalized == canonical then
+            return entry.canonical
+        end
+
+        if normalized:find(
+            canonical,
+            1,
+            true
+        ) then
+
+            return entry.canonical
+        end
+
+        -- Aliases
+        for _, alias in ipairs(
+            entry.aliases
+        ) do
+
+            alias =
+                alias:lower()
+
+            if normalized == alias then
+                return entry.canonical
+            end
+
+            if normalized:find(
+                alias,
+                1,
+                true
+            ) then
+
+                return entry.canonical
+            end
+        end
+    end
+
+    return nil
+end
+
+--==================================================
+-- IMPORTANT:
+-- DETERMINE IF PHOTO TARGET IS ACTUALLY A PLAYER
+--==================================================
+
+local function isRealPlayerPhotoTask(taskText)
+
+    local targetText =
+        getPhotoTargetText(
+            taskText
+        )
+
+    if not targetText then
+        return false
+    end
+
+    -- IMPORTANT:
+    -- If target is a whitelist area,
+    -- it is NOT a player task.
+
+    local area =
+        resolveArea(taskText)
+
+    if area then
+        return false
+    end
+
+    -- Check real player immediately.
+    local player =
+        findPlayerByInfo(
+            targetText
+        )
+
+    if player then
+        return true
+    end
+
+    return false
+end
+
+--==================================================
+-- GET PLAYER TARGET
+--==================================================
+
+local function getTargetPlayerText(taskText)
+
+    return getPhotoTargetText(
+        taskText
+    )
+end
+
+--==================================================
+-- FIND PLAYER TARGET WITH LOOP
+--==================================================
+
+local function findPlayerTarget(
+    taskText
+)
+
+    local requestedName =
+        getTargetPlayerText(
+            taskText
+        )
+
+    if not requestedName then
+        return nil
+    end
+
+    State.targetPlayer =
+        requestedName
+
+    for attempt = 1,
+        S.PlayerSearchAttempts do
+
+        if not State.farming then
+            return nil
+        end
+
+        -- Task must still be the same
+        local currentTask =
+            getTaskText()
+
+        if currentTask
+            and currentTask ~= "" then
+
+            if currentTask ~= taskText then
+                return nil
+            end
+        end
+
+        local player,
+            character,
+            position =
+            findPlayerByInfo(
+                requestedName
+            )
+
+        if player
+            and character
+            and position then
+
+            State.targetUsername =
+                player.Name
+
+            return {
+                player = player,
+                character = character,
+                position = position,
+                username = player.Name,
+                displayName = player.DisplayName,
+            }
+        end
+
+        task.wait(
+            S.PlayerSearchDelay
+        )
+    end
+
+    return nil
+end
+
+--==================================================
+-- PLAYER TASK CHECK
+--==================================================
+
+local function isPlayerPhotoTask(taskText)
+
+    if not taskText then
+        return false
+    end
+
+    -- FIX:
+    -- Area has priority over generic
+    -- "Get a photo of" detection.
+
+    local area =
+        resolveArea(
+            taskText
+        )
+
+    if area then
+        return false
+    end
+
+    return isRealPlayerPhotoTask(
+        taskText
+    )
+end
+
+--==================================================
+-- WHITELIST CHECK
+--==================================================
+
+local function isWhitelistedTask(
+    taskText
+)
+
+    if not taskText then
+        return false
+    end
+
+    -- Real player task
+    if isPlayerPhotoTask(
+        taskText
+    ) then
+
+        return true
+    end
+
+    -- Whitelisted area
+    return resolveArea(
+        taskText
+    ) ~= nil
+end
+
+--==================================================
+-- REJECTED TASK
+-- MUSIC ROOM
+--==================================================
+
+local function isRejectedTask(
+    taskText
+)
+
+    if not taskText then
+        return false
+    end
+
+    local area =
+        resolveArea(
+            taskText
+        )
+
+    if area ~= "Music Room" then
+        return false
+    end
+
+    return true
 end
 
 --==================================================
@@ -604,6 +1150,9 @@ local function restartUntilValidTask()
     State.processing = false
     State.tweening = false
 
+    State.targetPlayer = ""
+    State.targetUsername = ""
+
     cancelTween()
     setCollision(true)
 
@@ -628,7 +1177,26 @@ local function restartUntilValidTask()
                 true
             ) then
 
-                if isWhitelistedTask(
+                -- PLAYER
+                if isPlayerPhotoTask(
+                    taskText
+                ) then
+
+                    local target =
+                        findPlayerTarget(
+                            taskText
+                        )
+
+                    if target then
+
+                        State.lastTask = ""
+                        State.restarting = false
+
+                        return true
+                    end
+
+                -- AREA
+                elseif isWhitelistedTask(
                     taskText
                 )
                 and not isRejectedTask(
@@ -673,7 +1241,8 @@ local function restartUntilValidTask()
         -- CHECK ASSIGNMENT
         --==========================================
 
-        for i = 1, S.MaxAttempts do
+        for i = 1,
+            S.MaxAttempts do
 
             if not State.farming then
                 break
@@ -685,19 +1254,37 @@ local function restartUntilValidTask()
             if newTask
                 and newTask ~= "" then
 
-                local lower =
+                local newLower =
                     newTask:lower()
 
-                if not lower:find(
+                if not newLower:find(
                     "waiting for assignment",
                     1,
                     true
                 ) then
 
-                    --==================================
-                    -- VALID + NOT MUSIC
-                    --==================================
+                    -- PLAYER
+                    if isPlayerPhotoTask(
+                        newTask
+                    ) then
 
+                        local target =
+                            findPlayerTarget(
+                                newTask
+                            )
+
+                        if target then
+
+                            State.lastTask = ""
+                            State.restarting = false
+
+                            return true
+                        end
+
+                        break
+                    end
+
+                    -- AREA
                     if isWhitelistedTask(
                         newTask
                     )
@@ -711,11 +1298,7 @@ local function restartUntilValidTask()
                         return true
                     end
 
-                    --==================================
-                    -- INVALID / MUSIC
-                    -- LOOP AGAIN
-                    --==================================
-
+                    -- INVALID
                     break
                 end
             end
@@ -732,13 +1315,15 @@ local function restartUntilValidTask()
 end
 
 --==================================================
--- FIND LOCATION
+-- FIND AREA LOCATION
 --==================================================
 
 local function findLocation(taskText)
 
     local area =
-        resolveArea(taskText)
+        resolveArea(
+            taskText
+        )
 
     if not area then
         return nil
@@ -752,12 +1337,41 @@ local function findLocation(taskText)
     )
 
     local normalized =
-        normalizeText(taskText)
+        normalizeText(
+            taskText
+        )
 
     table.insert(
         searchTerms,
         normalized
     )
+
+    -- Special aliases
+    if area == "GAKUMART" then
+
+        table.insert(
+            searchTerms,
+            "gakumart"
+        )
+
+        table.insert(
+            searchTerms,
+            "gaku mart"
+        )
+    end
+
+    if area == "Rooftop" then
+
+        table.insert(
+            searchTerms,
+            "rooftop"
+        )
+
+        table.insert(
+            searchTerms,
+            "roof"
+        )
+    end
 
     local bestPart = nil
     local bestScore = 0
@@ -787,13 +1401,15 @@ local function findLocation(taskText)
 
                     if score > bestScore then
 
-                        bestScore = score
-                        bestPart = object
+                        bestScore =
+                            score
+
+                        bestPart =
+                            object
                     end
                 end
             end
 
-            -- PhotoJobLandmark
             local landmark =
                 object:FindFirstChild(
                     "PhotoJobLandmark"
@@ -823,8 +1439,11 @@ local function findLocation(taskText)
 
                         if score > bestScore then
 
-                            bestScore = score
-                            bestPart = object
+                            bestScore =
+                                score
+
+                            bestPart =
+                                object
                         end
                     end
                 end
@@ -843,7 +1462,9 @@ end
 -- FAST MOVE
 --==================================================
 
-local function smoothTween(targetPosition)
+local function smoothTween(
+    targetPosition
+)
 
     if not HRP then
         return false
@@ -860,7 +1481,6 @@ local function smoothTween(targetPosition)
             - startPosition
         ).Magnitude
 
-    -- Very close = instant
     if distance <= S.MaxDistance then
 
         HRP.CFrame =
@@ -941,10 +1561,91 @@ local function smoothTween(targetPosition)
 end
 
 --==================================================
+-- MOVE TO PLAYER
+--==================================================
+
+local function moveToPlayerTarget(
+    target
+)
+
+    if not target then
+        return false
+    end
+
+    if not target.player then
+        return false
+    end
+
+    local player =
+        target.player
+
+    local character =
+        player.Character
+
+    if not character then
+        return false
+    end
+
+    local targetHRP =
+        character:FindFirstChild(
+            "HumanoidRootPart"
+        )
+
+    if not targetHRP then
+        return false
+    end
+
+    State.targetUsername =
+        player.Name
+
+    local targetPosition =
+        targetHRP.Position
+
+    local moved =
+        smoothTween(
+            targetPosition
+        )
+
+    if not moved then
+        return false
+    end
+
+    task.wait(0.05)
+
+    if character.Parent then
+
+        targetHRP =
+            character:FindFirstChild(
+                "HumanoidRootPart"
+            )
+
+        if targetHRP then
+
+            local distance =
+                (
+                    HRP.Position
+                    - targetHRP.Position
+                ).Magnitude
+
+            if distance > S.PhotoRange then
+
+                smoothTween(
+                    targetHRP.Position
+                )
+            end
+        end
+    end
+
+    return true
+end
+
+--==================================================
 -- TAKE PHOTO
 --==================================================
 
-local function takePhoto(targetPosition)
+local function takePhoto(
+    targetPosition
+)
 
     if not phoneScreenPush
         or not photoJobSubmit
@@ -998,7 +1699,7 @@ local function takePhoto(targetPosition)
         24
     )
 
-    -- Phone
+    -- PHONE
     local pushSuccess =
         pcall(
             phoneScreenPush.FireServer,
@@ -1020,7 +1721,7 @@ local function takePhoto(targetPosition)
             * 10
         )
 
-    -- Submit
+    -- SUBMIT
     local submitSuccess =
         pcall(
             photoJobSubmit.InvokeServer,
@@ -1035,6 +1736,181 @@ local function takePhoto(targetPosition)
     task.wait(0.15)
 
     return submitSuccess
+end
+
+--==================================================
+-- PROCESS PLAYER TASK
+--==================================================
+
+local function processPlayerTask(
+    taskText
+)
+
+    if not State.farming then
+        return false
+    end
+
+    local target =
+        findPlayerTarget(
+            taskText
+        )
+
+    if not target then
+
+        State.stopReason =
+            "Player not found: "
+            .. tostring(
+                getTargetPlayerText(
+                    taskText
+                ) or "Unknown"
+            )
+
+        State.lastTask = ""
+
+        restartUntilValidTask()
+
+        return false
+    end
+
+    local realPlayer =
+        target.player
+
+    State.targetUsername =
+        realPlayer.Name
+
+    local moved =
+        moveToPlayerTarget(
+            target
+        )
+
+    if not moved then
+
+        State.lastTask = ""
+
+        return false
+    end
+
+    if not State.farming then
+        return false
+    end
+
+    local character =
+        realPlayer.Character
+
+    local targetHRP
+
+    if character then
+
+        targetHRP =
+            character:FindFirstChild(
+                "HumanoidRootPart"
+            )
+    end
+
+    local photoPosition
+
+    if targetHRP then
+
+        photoPosition =
+            targetHRP.Position
+
+    else
+
+        photoPosition =
+            target.position
+    end
+
+    takePhoto(
+        photoPosition
+    )
+
+    setCollision(true)
+
+    State.tweening = false
+    State.processing = false
+
+    task.wait(0.5)
+
+    -- VERY IMPORTANT:
+    -- Clear old player task so the next
+    -- assignment can be processed.
+
+    State.lastTask = ""
+    State.targetPlayer = ""
+    State.targetUsername = ""
+
+    return true
+end
+
+--==================================================
+-- PROCESS AREA TASK
+--==================================================
+
+local function processAreaTask(
+    taskText
+)
+
+    local area =
+        resolveArea(
+            taskText
+        )
+
+    if not area then
+        return false
+    end
+
+    local position =
+        findLocation(
+            taskText
+        )
+
+    if not position then
+
+        State.stopReason =
+            "Location not found: "
+            .. tostring(area)
+
+        State.processing = false
+        State.lastTask = ""
+
+        return false
+    end
+
+    local moved =
+        smoothTween(
+            position
+        )
+
+    if not moved then
+
+        State.processing = false
+
+        return false
+    end
+
+    if not State.farming then
+
+        State.processing = false
+
+        return false
+    end
+
+    task.wait(0.2)
+
+    takePhoto(
+        position
+    )
+
+    setCollision(true)
+
+    State.tweening = false
+    State.processing = false
+
+    task.wait(0.5)
+
+    State.lastTask = ""
+
+    return true
 end
 
 --==================================================
@@ -1056,7 +1932,6 @@ local function processTask()
     local taskText =
         getTaskText()
 
-    -- No assignment
     if not taskText
         or taskText == "" then
 
@@ -1066,7 +1941,6 @@ local function processTask()
     local lower =
         taskText:lower()
 
-    -- Waiting
     if lower:find(
         "waiting for assignment",
         1,
@@ -1076,11 +1950,13 @@ local function processTask()
         return
     end
 
-    --==============================================
-    -- MUSIC ROOM = IMMEDIATE REROLL
-    --==============================================
+    --==================================================
+    -- 1. CHECK MUSIC ROOM FIRST
+    --==================================================
 
-    if isRejectedTask(taskText) then
+    if isRejectedTask(
+        taskText
+    ) then
 
         State.stopReason =
             "Music Room rejected: "
@@ -1091,88 +1967,78 @@ local function processTask()
         return
     end
 
-    --==============================================
-    -- WHITELIST
-    --==============================================
+    --==================================================
+    -- 2. AREA HAS PRIORITY
+    --==================================================
+    --
+    -- This fixes:
+    -- "Get a photo of GAKUMART"
+    -- "Get a photo of Rooftop"
+    -- etc.
+    --
+    -- They will NOT be treated as players.
 
     local area =
-        resolveArea(taskText)
+        resolveArea(
+            taskText
+        )
 
-    if not area then
+    if area then
 
-        State.stopReason =
-            "Invalid task: "
-            .. tostring(taskText)
+        -- Duplicate protection
+        if taskText ==
+            State.lastTask then
 
-        restartUntilValidTask()
+            return
+        end
 
-        return
-    end
+        State.processing = true
+        State.lastTask = taskText
+        State.taskCount += 1
 
-    --==============================================
-    -- DUPLICATE CHECK
-    --==============================================
-
-    if taskText == State.lastTask then
-        return
-    end
-
-    State.processing = true
-    State.lastTask = taskText
-    State.taskCount += 1
-
-    --==============================================
-    -- FIND LOCATION
-    --==============================================
-
-    local position =
-        findLocation(taskText)
-
-    if not position then
-
-        State.processing = false
-        State.lastTask = ""
+        processAreaTask(
+            taskText
+        )
 
         return
     end
 
-    --==============================================
-    -- MOVE
-    --==============================================
+    --==================================================
+    -- 3. PLAYER PHOTO
+    --==================================================
 
-    local moved =
-        smoothTween(position)
+    if isPlayerPhotoTask(
+        taskText
+    ) then
 
-    if not moved then
+        if taskText ==
+            State.lastTask then
+
+            return
+        end
+
+        State.processing = true
+        State.lastTask = taskText
+        State.taskCount += 1
+
+        processPlayerTask(
+            taskText
+        )
 
         State.processing = false
 
         return
     end
 
-    if not State.farming then
+    --==================================================
+    -- 4. UNKNOWN / INVALID TASK
+    --==================================================
 
-        State.processing = false
+    State.stopReason =
+        "Invalid task: "
+        .. tostring(taskText)
 
-        return
-    end
-
-    task.wait(0.2)
-
-    --==============================================
-    -- PHOTO
-    --==============================================
-
-    takePhoto(position)
-
-    setCollision(true)
-
-    State.tweening = false
-    State.processing = false
-
-    task.wait(0.5)
-
-    State.lastTask = ""
+    restartUntilValidTask()
 end
 
 --==================================================
@@ -1209,7 +2075,9 @@ end
 LocalPlayer.CharacterAdded:Connect(
     function(newCharacter)
 
-        bindCharacter(newCharacter)
+        bindCharacter(
+            newCharacter
+        )
 
     end
 )
@@ -1222,7 +2090,6 @@ task.spawn(function()
 
     local attempts = 0
 
-    -- Find remotes
     while not findRemotes()
         and attempts < 30 do
 
@@ -1241,14 +2108,6 @@ task.spawn(function()
         return
     end
 
-    -- First job
-    startNewJob()
-
-    task.wait(
-        S.StartDelay
-    )
-
-    -- Auto start
     if S.Enabled
         and S.AutoStart then
 
@@ -1260,6 +2119,17 @@ task.spawn(function()
         State.taskCount = 0
         State.restartCount = 0
         State.stopReason = ""
+
+        State.targetPlayer = ""
+        State.targetUsername = ""
+
+        setCollision(true)
+
+        startNewJob()
+
+        task.wait(
+            S.StartDelay
+        )
 
         task.spawn(
             farmLoop
@@ -1295,6 +2165,9 @@ _G.StartFarming = function()
     State.restartCount = 0
     State.stopReason = ""
 
+    State.targetPlayer = ""
+    State.targetUsername = ""
+
     setCollision(true)
 
     startNewJob()
@@ -1313,7 +2186,6 @@ _G.StopFarming = function()
     stopFarming(
         "Stopped manually"
     )
-
 end
 
 --==================================================
@@ -1323,6 +2195,7 @@ end
 _G.GetStatus = function()
 
     return {
+
         farming =
             State.farming,
 
@@ -1346,6 +2219,12 @@ _G.GetStatus = function()
 
         stopReason =
             State.stopReason,
+
+        targetPlayer =
+            State.targetPlayer,
+
+        targetUsername =
+            State.targetUsername,
     }
 end
 
@@ -1360,38 +2239,48 @@ _G.PhotoFarmStatus = function()
     )
 
     print(
-        "Farming      :",
+        "Farming       :",
         State.farming
     )
 
     print(
-        "Processing   :",
+        "Processing    :",
         State.processing
     )
 
     print(
-        "Restarting   :",
+        "Restarting    :",
         State.restarting
     )
 
     print(
-        "Task         :",
+        "Task          :",
         State.lastTask
     )
 
     print(
-        "Count        :",
+        "Count         :",
         State.taskCount
     )
 
     print(
-        "Restarts     :",
+        "Restarts      :",
         State.restartCount
     )
 
     print(
-        "Reason       :",
+        "Reason        :",
         State.stopReason
+    )
+
+    print(
+        "Target Player :",
+        State.targetPlayer
+    )
+
+    print(
+        "Real Username :",
+        State.targetUsername
     )
 
     print(
