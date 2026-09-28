@@ -5,6 +5,7 @@
 --// AREA PHOTO = WHITELIST AREA -> PHOTO
 --// MUSIC ROOM = AUTO REROLL
 --// INVALID TASK = STOP -> RESTART -> CHECK AGAIN
+--// GUI = ON / OFF
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -18,9 +19,11 @@ local TweenService      = game:GetService("TweenService")
 local Settings = {
     Farming = {
         Enabled      = true,
-        AutoStart    = true,
 
-        -- LOOP
+        -- IMPORTANT:
+        -- FALSE = script start dalam keadaan OFF
+        AutoStart    = false,
+
         RefreshRate  = 0.08,
 
         -- MOVEMENT
@@ -214,6 +217,386 @@ local State = {
 local currentTween = nil
 
 --==================================================
+-- GUI
+--==================================================
+
+local ScreenGui
+local MainFrame
+local ToggleButton
+local StatusLabel
+
+local function createGUI()
+
+    -- Remove old GUI if exists
+    local oldGui =
+        LocalPlayer.PlayerGui:FindFirstChild(
+            "PhotoFarmGUI"
+        )
+
+    if oldGui then
+        oldGui:Destroy()
+    end
+
+    ScreenGui =
+        Instance.new("ScreenGui")
+
+    ScreenGui.Name =
+        "PhotoFarmGUI"
+
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.ZIndexBehavior =
+        Enum.ZIndexBehavior.Sibling
+
+    ScreenGui.Parent =
+        LocalPlayer.PlayerGui
+
+    --==================================================
+    -- MAIN FRAME
+    --==================================================
+
+    MainFrame =
+        Instance.new("Frame")
+
+    MainFrame.Name =
+        "MainFrame"
+
+    MainFrame.Size =
+        UDim2.new(0, 190, 0, 85)
+
+    MainFrame.Position =
+        UDim2.new(
+            0.5,
+            -95,
+            0,
+            100
+        )
+
+    MainFrame.BackgroundColor3 =
+        Color3.fromRGB(
+            25,
+            25,
+            25
+        )
+
+    MainFrame.BorderSizePixel = 0
+
+    MainFrame.Parent =
+        ScreenGui
+
+    local corner =
+        Instance.new("UICorner")
+
+    corner.CornerRadius =
+        UDim.new(0, 10)
+
+    corner.Parent =
+        MainFrame
+
+    --==================================================
+    -- TITLE
+    --==================================================
+
+    local Title =
+        Instance.new("TextLabel")
+
+    Title.Name =
+        "Title"
+
+    Title.Size =
+        UDim2.new(
+            1,
+            -20,
+            0,
+            25
+        )
+
+    Title.Position =
+        UDim2.new(
+            0,
+            10,
+            0,
+            5
+        )
+
+    Title.BackgroundTransparency = 1
+
+    Title.Text =
+        "PHOTO FARM"
+
+    Title.TextColor3 =
+        Color3.fromRGB(
+            255,
+            255,
+            255
+        )
+
+    Title.TextSize = 16
+    Title.Font =
+        Enum.Font.GothamBold
+
+    Title.TextXAlignment =
+        Enum.TextXAlignment.Left
+
+    Title.Parent =
+        MainFrame
+
+    --==================================================
+    -- STATUS
+    --==================================================
+
+    StatusLabel =
+        Instance.new("TextLabel")
+
+    StatusLabel.Name =
+        "Status"
+
+    StatusLabel.Size =
+        UDim2.new(
+            0,
+            70,
+            0,
+            25
+        )
+
+    StatusLabel.Position =
+        UDim2.new(
+            0,
+            10,
+            0,
+            34
+        )
+
+    StatusLabel.BackgroundTransparency = 1
+
+    StatusLabel.Text =
+        "OFF"
+
+    StatusLabel.TextColor3 =
+        Color3.fromRGB(
+            255,
+            80,
+            80
+        )
+
+    StatusLabel.TextSize = 14
+
+    StatusLabel.Font =
+        Enum.Font.GothamBold
+
+    StatusLabel.TextXAlignment =
+        Enum.TextXAlignment.Left
+
+    StatusLabel.Parent =
+        MainFrame
+
+    --==================================================
+    -- BUTTON
+    --==================================================
+
+    ToggleButton =
+        Instance.new("TextButton")
+
+    ToggleButton.Name =
+        "Toggle"
+
+    ToggleButton.Size =
+        UDim2.new(
+            0,
+            90,
+            0,
+            32
+        )
+
+    ToggleButton.Position =
+        UDim2.new(
+            1,
+            -100,
+            0,
+            38
+        )
+
+    ToggleButton.BackgroundColor3 =
+        Color3.fromRGB(
+            170,
+            45,
+            45
+        )
+
+    ToggleButton.BorderSizePixel = 0
+
+    ToggleButton.Text =
+        "OFF"
+
+    ToggleButton.TextColor3 =
+        Color3.fromRGB(
+            255,
+            255,
+            255
+        )
+
+    ToggleButton.TextSize = 14
+
+    ToggleButton.Font =
+        Enum.Font.GothamBold
+
+    ToggleButton.Parent =
+        MainFrame
+
+    local buttonCorner =
+        Instance.new("UICorner")
+
+    buttonCorner.CornerRadius =
+        UDim.new(0, 7)
+
+    buttonCorner.Parent =
+        ToggleButton
+
+    --==================================================
+    -- DRAG
+    --==================================================
+
+    local dragging = false
+    local dragStart
+    local startPosition
+
+    MainFrame.InputBegan:Connect(
+        function(input)
+
+            if input.UserInputType ==
+                Enum.UserInputType.MouseButton1
+                or input.UserInputType ==
+                Enum.UserInputType.Touch then
+
+                dragging = true
+
+                dragStart =
+                    input.Position
+
+                startPosition =
+                    MainFrame.Position
+
+                input.Changed:Connect(
+                    function()
+
+                        if input.UserInputState ==
+                            Enum.UserInputState.End then
+
+                            dragging = false
+                        end
+
+                    end
+                )
+            end
+        end
+    )
+
+    MainFrame.InputChanged:Connect(
+        function(input)
+
+            if input.UserInputType ==
+                Enum.UserInputType.MouseMovement
+                or input.UserInputType ==
+                Enum.UserInputType.Touch then
+
+                -- handled below
+            end
+
+        end
+    )
+
+    game:GetService("UserInputService")
+        .InputChanged:Connect(
+        function(input)
+
+            if not dragging then
+                return
+            end
+
+            if input.UserInputType ~=
+                Enum.UserInputType.MouseMovement
+                and input.UserInputType ~=
+                Enum.UserInputType.Touch then
+
+                return
+            end
+
+            local delta =
+                input.Position
+                - dragStart
+
+            MainFrame.Position =
+                UDim2.new(
+                    startPosition.X.Scale,
+                    startPosition.X.Offset
+                        + delta.X,
+
+                    startPosition.Y.Scale,
+                    startPosition.Y.Offset
+                        + delta.Y
+                )
+        end
+    )
+end
+
+--==================================================
+-- GUI UPDATE
+--==================================================
+
+local function updateGUI()
+
+    if not ToggleButton
+        or not StatusLabel then
+
+        return
+    end
+
+    if State.farming then
+
+        ToggleButton.Text =
+            "ON"
+
+        ToggleButton.BackgroundColor3 =
+            Color3.fromRGB(
+                45,
+                170,
+                80
+            )
+
+        StatusLabel.Text =
+            "FARMING"
+
+        StatusLabel.TextColor3 =
+            Color3.fromRGB(
+                80,
+                255,
+                120
+            )
+
+    else
+
+        ToggleButton.Text =
+            "OFF"
+
+        ToggleButton.BackgroundColor3 =
+            Color3.fromRGB(
+                170,
+                45,
+                45
+            )
+
+        StatusLabel.Text =
+            "OFF"
+
+        StatusLabel.TextColor3 =
+            Color3.fromRGB(
+                255,
+                80,
+                80
+            )
+    end
+end
+
+--==================================================
 -- CHARACTER
 --==================================================
 
@@ -221,15 +604,17 @@ local function bindCharacter(character)
 
     Character = character
 
-    HRP = character:WaitForChild(
-        "HumanoidRootPart",
-        10
-    )
+    HRP =
+        character:WaitForChild(
+            "HumanoidRootPart",
+            10
+        )
 
-    Humanoid = character:WaitForChild(
-        "Humanoid",
-        10
-    )
+    Humanoid =
+        character:WaitForChild(
+            "Humanoid",
+            10
+        )
 
     if not HRP then
         return
@@ -342,6 +727,8 @@ local function stopFarming(reason)
 
     cancelTween()
     setCollision(true)
+
+    updateGUI()
 end
 
 --==================================================
@@ -845,7 +1232,6 @@ local function resolveArea(taskText)
         AREA_TASKS
     ) do
 
-        -- Canonical
         local canonical =
             entry.canonical:lower()
 
@@ -862,7 +1248,6 @@ local function resolveArea(taskText)
             return entry.canonical
         end
 
-        -- Aliases
         for _, alias in ipairs(
             entry.aliases
         ) do
@@ -889,8 +1274,7 @@ local function resolveArea(taskText)
 end
 
 --==================================================
--- IMPORTANT:
--- DETERMINE IF PHOTO TARGET IS ACTUALLY A PLAYER
+-- DETERMINE PLAYER PHOTO TASK
 --==================================================
 
 local function isRealPlayerPhotoTask(taskText)
@@ -904,10 +1288,6 @@ local function isRealPlayerPhotoTask(taskText)
         return false
     end
 
-    -- IMPORTANT:
-    -- If target is a whitelist area,
-    -- it is NOT a player task.
-
     local area =
         resolveArea(taskText)
 
@@ -915,7 +1295,6 @@ local function isRealPlayerPhotoTask(taskText)
         return false
     end
 
-    -- Check real player immediately.
     local player =
         findPlayerByInfo(
             targetText
@@ -966,7 +1345,6 @@ local function findPlayerTarget(
             return nil
         end
 
-        -- Task must still be the same
         local currentTask =
             getTaskText()
 
@@ -1019,10 +1397,6 @@ local function isPlayerPhotoTask(taskText)
         return false
     end
 
-    -- FIX:
-    -- Area has priority over generic
-    -- "Get a photo of" detection.
-
     local area =
         resolveArea(
             taskText
@@ -1049,7 +1423,6 @@ local function isWhitelistedTask(
         return false
     end
 
-    -- Real player task
     if isPlayerPhotoTask(
         taskText
     ) then
@@ -1057,7 +1430,6 @@ local function isWhitelistedTask(
         return true
     end
 
-    -- Whitelisted area
     return resolveArea(
         taskText
     ) ~= nil
@@ -1120,6 +1492,13 @@ local function startNewJob()
         return false
     end
 
+    -- IMPORTANT:
+    -- Jangan start jika toggle OFF.
+
+    if not State.farming then
+        return false
+    end
+
     local success =
         pcall(function()
 
@@ -1158,10 +1537,6 @@ local function restartUntilValidTask()
 
     while State.farming do
 
-        --==========================================
-        -- CHECK CURRENT TASK
-        --==========================================
-
         local taskText =
             getTaskText()
 
@@ -1177,7 +1552,6 @@ local function restartUntilValidTask()
                 true
             ) then
 
-                -- PLAYER
                 if isPlayerPhotoTask(
                     taskText
                 ) then
@@ -1195,7 +1569,6 @@ local function restartUntilValidTask()
                         return true
                     end
 
-                -- AREA
                 elseif isWhitelistedTask(
                     taskText
                 )
@@ -1211,9 +1584,9 @@ local function restartUntilValidTask()
             end
         end
 
-        --==========================================
-        -- STOP
-        --==========================================
+        if not State.farming then
+            break
+        end
 
         stopCurrentJob()
 
@@ -1227,19 +1600,11 @@ local function restartUntilValidTask()
             break
         end
 
-        --==========================================
-        -- START
-        --==========================================
-
         startNewJob()
 
         task.wait(
             S.StartDelay
         )
-
-        --==========================================
-        -- CHECK ASSIGNMENT
-        --==========================================
 
         for i = 1,
             S.MaxAttempts do
@@ -1263,7 +1628,6 @@ local function restartUntilValidTask()
                     true
                 ) then
 
-                    -- PLAYER
                     if isPlayerPhotoTask(
                         newTask
                     ) then
@@ -1284,7 +1648,6 @@ local function restartUntilValidTask()
                         break
                     end
 
-                    -- AREA
                     if isWhitelistedTask(
                         newTask
                     )
@@ -1298,7 +1661,6 @@ local function restartUntilValidTask()
                         return true
                     end
 
-                    -- INVALID
                     break
                 end
             end
@@ -1346,7 +1708,6 @@ local function findLocation(taskText)
         normalized
     )
 
-    -- Special aliases
     if area == "GAKUMART" then
 
         table.insert(
@@ -1467,6 +1828,10 @@ local function smoothTween(
 )
 
     if not HRP then
+        return false
+    end
+
+    if not State.farming then
         return false
     end
 
@@ -1647,6 +2012,10 @@ local function takePhoto(
     targetPosition
 )
 
+    if not State.farming then
+        return false
+    end
+
     if not phoneScreenPush
         or not photoJobSubmit
         or not HRP then
@@ -1699,7 +2068,6 @@ local function takePhoto(
         24
     )
 
-    -- PHONE
     local pushSuccess =
         pcall(
             phoneScreenPush.FireServer,
@@ -1713,6 +2081,10 @@ local function takePhoto(
 
     task.wait(0.15)
 
+    if not State.farming then
+        return false
+    end
+
     local lookAt =
         targetPosition
         or (
@@ -1721,7 +2093,6 @@ local function takePhoto(
             * 10
         )
 
-    -- SUBMIT
     local submitSuccess =
         pcall(
             photoJobSubmit.InvokeServer,
@@ -1830,10 +2201,6 @@ local function processPlayerTask(
     State.processing = false
 
     task.wait(0.5)
-
-    -- VERY IMPORTANT:
-    -- Clear old player task so the next
-    -- assignment can be processed.
 
     State.lastTask = ""
     State.targetPlayer = ""
@@ -1951,7 +2318,7 @@ local function processTask()
     end
 
     --==================================================
-    -- 1. CHECK MUSIC ROOM FIRST
+    -- MUSIC ROOM
     --==================================================
 
     if isRejectedTask(
@@ -1968,15 +2335,8 @@ local function processTask()
     end
 
     --==================================================
-    -- 2. AREA HAS PRIORITY
+    -- AREA HAS PRIORITY
     --==================================================
-    --
-    -- This fixes:
-    -- "Get a photo of GAKUMART"
-    -- "Get a photo of Rooftop"
-    -- etc.
-    --
-    -- They will NOT be treated as players.
 
     local area =
         resolveArea(
@@ -1985,7 +2345,6 @@ local function processTask()
 
     if area then
 
-        -- Duplicate protection
         if taskText ==
             State.lastTask then
 
@@ -2004,7 +2363,7 @@ local function processTask()
     end
 
     --==================================================
-    -- 3. PLAYER PHOTO
+    -- PLAYER PHOTO
     --==================================================
 
     if isPlayerPhotoTask(
@@ -2031,7 +2390,7 @@ local function processTask()
     end
 
     --==================================================
-    -- 4. UNKNOWN / INVALID TASK
+    -- INVALID TASK
     --==================================================
 
     State.stopReason =
@@ -2045,7 +2404,16 @@ end
 -- FARM LOOP
 --==================================================
 
+local farmLoopRunning = false
+
 local function farmLoop()
+
+    -- Prevent duplicate loops
+    if farmLoopRunning then
+        return
+    end
+
+    farmLoopRunning = true
 
     while State.farming do
 
@@ -2059,6 +2427,111 @@ local function farmLoop()
     end
 
     setCollision(true)
+
+    farmLoopRunning = false
+end
+
+--==================================================
+-- START FARMING
+--==================================================
+
+local function startFarming()
+
+    if State.farming then
+        return
+    end
+
+    if not findRemotes() then
+
+        State.stopReason =
+            "PhotoJob remotes not found"
+
+        updateGUI()
+
+        return
+    end
+
+    State.farming = true
+    State.processing = false
+    State.tweening = false
+    State.restarting = false
+
+    State.lastTask = ""
+    State.taskCount = 0
+    State.restartCount = 0
+    State.stopReason = ""
+
+    State.targetPlayer = ""
+    State.targetUsername = ""
+
+    setCollision(true)
+
+    updateGUI()
+
+    -- Start job hanya saat ON
+    startNewJob()
+
+    task.wait(
+        S.StartDelay
+    )
+
+    if not State.farming then
+        return
+    end
+
+    task.spawn(
+        farmLoop
+    )
+end
+
+--==================================================
+-- STOP FARMING
+--==================================================
+
+local function stopFarmingFromGUI()
+
+    if not State.farming then
+        updateGUI()
+        return
+    end
+
+    -- Cancel movement
+    cancelTween()
+
+    -- Stop job
+    stopCurrentJob()
+
+    State.farming = false
+    State.processing = false
+    State.tweening = false
+    State.restarting = false
+
+    State.targetPlayer = ""
+    State.targetUsername = ""
+
+    State.stopReason =
+        "Disabled from GUI"
+
+    setCollision(true)
+
+    updateGUI()
+end
+
+--==================================================
+-- GUI BUTTON
+--==================================================
+
+local function toggleFarming()
+
+    if State.farming then
+
+        stopFarmingFromGUI()
+
+    else
+
+        startFarming()
+
+    end
 end
 
 --==================================================
@@ -2083,6 +2556,21 @@ LocalPlayer.CharacterAdded:Connect(
 )
 
 --==================================================
+-- CREATE GUI
+--==================================================
+
+createGUI()
+updateGUI()
+
+ToggleButton.MouseButton1Click:Connect(
+    function()
+
+        toggleFarming()
+
+    end
+)
+
+--==================================================
 -- INITIALIZATION
 --==================================================
 
@@ -2101,39 +2589,31 @@ task.spawn(function()
     if not phoneScreenPush
         or not photoJobSubmit then
 
-        stopFarming(
+        State.stopReason =
             "PhotoJob remotes not found"
-        )
+
+        State.farming = false
+
+        updateGUI()
 
         return
     end
 
+    --==================================================
+    -- IMPORTANT
+    -- AUTO START DISABLED
+    --==================================================
+
     if S.Enabled
         and S.AutoStart then
 
-        State.farming = true
-        State.processing = false
-        State.restarting = false
+        startFarming()
 
-        State.lastTask = ""
-        State.taskCount = 0
-        State.restartCount = 0
-        State.stopReason = ""
+    else
 
-        State.targetPlayer = ""
-        State.targetUsername = ""
+        State.farming = false
+        updateGUI()
 
-        setCollision(true)
-
-        startNewJob()
-
-        task.wait(
-            S.StartDelay
-        )
-
-        task.spawn(
-            farmLoop
-        )
     end
 end)
 
@@ -2143,38 +2623,8 @@ end)
 
 _G.StartFarming = function()
 
-    if State.farming then
-        return
-    end
+    startFarming()
 
-    if not findRemotes() then
-
-        State.stopReason =
-            "PhotoJob remotes not found"
-
-        return
-    end
-
-    State.farming = true
-    State.processing = false
-    State.tweening = false
-    State.restarting = false
-
-    State.lastTask = ""
-    State.taskCount = 0
-    State.restartCount = 0
-    State.stopReason = ""
-
-    State.targetPlayer = ""
-    State.targetUsername = ""
-
-    setCollision(true)
-
-    startNewJob()
-
-    task.spawn(
-        farmLoop
-    )
 end
 
 --==================================================
@@ -2183,9 +2633,8 @@ end
 
 _G.StopFarming = function()
 
-    stopFarming(
-        "Stopped manually"
-    )
+    stopFarmingFromGUI()
+
 end
 
 --==================================================
@@ -2225,7 +2674,9 @@ _G.GetStatus = function()
 
         targetUsername =
             State.targetUsername,
+
     }
+
 end
 
 --==================================================
@@ -2286,4 +2737,5 @@ _G.PhotoFarmStatus = function()
     print(
         "================================"
     )
+
 end
