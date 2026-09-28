@@ -1,4 +1,3 @@
-
 --// Made by @DirectMemoryAccess
 --// Photo Job Farming
 --// WHITELIST AREA ONLY
@@ -9,12 +8,15 @@
 --// GUI = ON / OFF
 --// PLAYER TELEPORT = ONCE, NO FOLLOW LOOP
 --// PLAYER DISTANCE = GUI CONTROL
+--// FLY = AUTO ON WHEN FARMING STARTS
+--// PHOTO TIMEOUT = AUTO STOP JOB -> START JOB
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace         = game:GetService("Workspace")
 local TweenService      = game:GetService("TweenService")
 local UserInputService  = game:GetService("UserInputService")
+local RunService        = game:GetService("RunService")
 
 --==================================================
 -- SETTINGS
@@ -24,44 +26,54 @@ local Settings = {
 
     Farming = {
 
-        Enabled      = true,
-        AutoStart    = false,
+        Enabled   = true,
+        AutoStart = false,
 
-        RefreshRate  = 0.08,
+        RefreshRate = 0.08,
 
         --==================================================
         -- MOVEMENT
         --==================================================
 
-        TweenSpeed   = 180,
-        MaxDistance  = 1.0,
-        MaxDuration  = 0.35,
-        MinDuration  = 0.05,
+        TweenSpeed  = 180,
+        MaxDistance = 1.0,
+        MaxDuration = 0.35,
+        MinDuration = 0.05,
 
         --==================================================
         -- PLAYER TELEPORT
         --==================================================
 
-        -- Jarak dari player target.
-        -- Bisa diubah langsung melalui GUI.
         PlayerDistance = 3.0,
+
+        --==================================================
+        -- FLY
+        --==================================================
+
+        FlyEnabled = true,
+
+        --==================================================
+        -- PLAYER PHOTO TIMEOUT
+        --==================================================
+
+        PhotoTimeout = 15,
 
         --==================================================
         -- PHOTO
         --==================================================
 
-        PhotoRange   = 10,
-        MaxAttempts  = 20,
+        PhotoRange = 10,
+        MaxAttempts = 20,
 
         --==================================================
         -- PLAYER SEARCH
         --==================================================
 
         PlayerSearchAttempts = 30,
-        PlayerSearchDelay    = 0.05,
+        PlayerSearchDelay = 0.05,
 
         --==================================================
-        -- RESTART / REROLL
+        -- RESTART
         --==================================================
 
         RestartDelay   = 0.01,
@@ -71,6 +83,18 @@ local Settings = {
 }
 
 local S = Settings.Farming
+
+--==================================================
+-- GUI LIMITS
+--==================================================
+
+local MIN_PLAYER_DISTANCE = 0
+local MAX_PLAYER_DISTANCE = 20
+local DISTANCE_STEP = 0.5
+
+local MIN_PHOTO_TIMEOUT = 1
+local MAX_PHOTO_TIMEOUT = 60
+local PHOTO_TIMEOUT_STEP = 1
 
 --==================================================
 -- WHITELIST AREA
@@ -223,22 +247,32 @@ local photoJobSubmit
 
 local State = {
 
-    farming      = false,
-    processing   = false,
-    tweening     = false,
-    restarting   = false,
+    farming = false,
+    processing = false,
+    tweening = false,
+    restarting = false,
 
-    lastTask     = "",
-    taskCount    = 0,
+    -- FLY
+    flyEnabled = false,
+    flyConnection = nil,
+
+    -- FLY OBJECTS
+    flyAttachment = nil,
+    flyVelocity = nil,
+    flyOrientation = nil,
+
+    lastTask = "",
+    taskCount = 0,
     restartCount = 0,
 
-    stopReason   = "",
+    stopReason = "",
 
-    targetPlayer   = "",
+    targetPlayer = "",
     targetUsername = "",
 }
 
 local currentTween = nil
+local farmLoopRunning = false
 
 --==================================================
 -- GUI
@@ -253,13 +287,22 @@ local DistanceLabel
 local MinusButton
 local PlusButton
 
+local TimeoutLabel
+local TimeoutMinusButton
+local TimeoutPlusButton
+
 --==================================================
--- DISTANCE CONTROL
+-- FORWARD DECLARATIONS
 --==================================================
 
-local MIN_PLAYER_DISTANCE = 0
-local MAX_PLAYER_DISTANCE = 20
-local DISTANCE_STEP = 0.5
+local startFarming
+local stopFarmingFromGUI
+local startFly
+local stopFly
+
+--==================================================
+-- DISTANCE
+--==================================================
 
 local function setPlayerDistance(value)
 
@@ -275,10 +318,10 @@ local function setPlayerDistance(value)
         MAX_PLAYER_DISTANCE
     )
 
-    -- 1 decimal only
-    value = math.floor(
-        value * 10 + 0.5
-    ) / 10
+    value =
+        math.floor(
+            value * 10 + 0.5
+        ) / 10
 
     S.PlayerDistance = value
 
@@ -299,6 +342,52 @@ local function changePlayerDistance(amount)
     setPlayerDistance(
         S.PlayerDistance + amount
     )
+
+end
+
+--==================================================
+-- PHOTO TIMEOUT
+--==================================================
+
+local function setPhotoTimeout(value)
+
+    value = tonumber(value)
+
+    if not value then
+        return
+    end
+
+    value = math.clamp(
+        value,
+        MIN_PHOTO_TIMEOUT,
+        MAX_PHOTO_TIMEOUT
+    )
+
+    value =
+        math.floor(
+            value + 0.5
+        )
+
+    S.PhotoTimeout = value
+
+    if TimeoutLabel then
+
+        TimeoutLabel.Text =
+            "Timeout: "
+            .. tostring(
+                S.PhotoTimeout
+            )
+            .. "s"
+
+    end
+end
+
+local function changePhotoTimeout(amount)
+
+    setPhotoTimeout(
+        S.PhotoTimeout + amount
+    )
+
 end
 
 --==================================================
@@ -348,15 +437,15 @@ local function createGUI()
     MainFrame.Size =
         UDim2.new(
             0,
-            210,
+            230,
             0,
-            130
+            170
         )
 
     MainFrame.Position =
         UDim2.new(
             0.5,
-            -105,
+            -115,
             0,
             100
         )
@@ -392,8 +481,7 @@ local function createGUI()
     local Title =
         Instance.new("TextLabel")
 
-    Title.Name =
-        "Title"
+    Title.Name = "Title"
 
     Title.Size =
         UDim2.new(
@@ -413,8 +501,7 @@ local function createGUI()
 
     Title.BackgroundTransparency = 1
 
-    Title.Text =
-        "PHOTO FARM"
+    Title.Text = "PHOTO FARM"
 
     Title.TextColor3 =
         Color3.fromRGB(
@@ -447,7 +534,7 @@ local function createGUI()
     StatusLabel.Size =
         UDim2.new(
             0,
-            80,
+            120,
             0,
             25
         )
@@ -462,8 +549,7 @@ local function createGUI()
 
     StatusLabel.BackgroundTransparency = 1
 
-    StatusLabel.Text =
-        "OFF"
+    StatusLabel.Text = "OFF"
 
     StatusLabel.TextColor3 =
         Color3.fromRGB(
@@ -518,8 +604,7 @@ local function createGUI()
 
     ToggleButton.BorderSizePixel = 0
 
-    ToggleButton.Text =
-        "OFF"
+    ToggleButton.Text = "OFF"
 
     ToggleButton.TextColor3 =
         Color3.fromRGB(
@@ -549,7 +634,7 @@ local function createGUI()
         ToggleButton
 
     --==================================================
-    -- DISTANCE LABEL
+    -- DISTANCE
     --==================================================
 
     DistanceLabel =
@@ -561,7 +646,7 @@ local function createGUI()
     DistanceLabel.Size =
         UDim2.new(
             0,
-            110,
+            120,
             0,
             28
         )
@@ -602,14 +687,13 @@ local function createGUI()
         MainFrame
 
     --==================================================
-    -- MINUS
+    -- DISTANCE MINUS
     --==================================================
 
     MinusButton =
         Instance.new("TextButton")
 
-    MinusButton.Name =
-        "Minus"
+    MinusButton.Name = "Minus"
 
     MinusButton.Size =
         UDim2.new(
@@ -636,8 +720,7 @@ local function createGUI()
 
     MinusButton.BorderSizePixel = 0
 
-    MinusButton.Text =
-        "-"
+    MinusButton.Text = "-"
 
     MinusButton.TextColor3 =
         Color3.fromRGB(
@@ -667,14 +750,13 @@ local function createGUI()
         MinusButton
 
     --==================================================
-    -- PLUS
+    -- DISTANCE PLUS
     --==================================================
 
     PlusButton =
         Instance.new("TextButton")
 
-    PlusButton.Name =
-        "Plus"
+    PlusButton.Name = "Plus"
 
     PlusButton.Size =
         UDim2.new(
@@ -701,8 +783,7 @@ local function createGUI()
 
     PlusButton.BorderSizePixel = 0
 
-    PlusButton.Text =
-        "+"
+    PlusButton.Text = "+"
 
     PlusButton.TextColor3 =
         Color3.fromRGB(
@@ -730,6 +811,187 @@ local function createGUI()
 
     plusCorner.Parent =
         PlusButton
+
+    --==================================================
+    -- TIMEOUT LABEL
+    --==================================================
+
+    TimeoutLabel =
+        Instance.new("TextLabel")
+
+    TimeoutLabel.Name =
+        "Timeout"
+
+    TimeoutLabel.Size =
+        UDim2.new(
+            0,
+            120,
+            0,
+            28
+        )
+
+    TimeoutLabel.Position =
+        UDim2.new(
+            0,
+            10,
+            0,
+            110
+        )
+
+    TimeoutLabel.BackgroundTransparency = 1
+
+    TimeoutLabel.Text =
+        "Timeout: "
+        .. tostring(
+            S.PhotoTimeout
+        )
+        .. "s"
+
+    TimeoutLabel.TextColor3 =
+        Color3.fromRGB(
+            220,
+            220,
+            220
+        )
+
+    TimeoutLabel.TextSize = 13
+
+    TimeoutLabel.Font =
+        Enum.Font.Gotham
+
+    TimeoutLabel.TextXAlignment =
+        Enum.TextXAlignment.Left
+
+    TimeoutLabel.Parent =
+        MainFrame
+
+    --==================================================
+    -- TIMEOUT MINUS
+    --==================================================
+
+    TimeoutMinusButton =
+        Instance.new("TextButton")
+
+    TimeoutMinusButton.Name =
+        "TimeoutMinus"
+
+    TimeoutMinusButton.Size =
+        UDim2.new(
+            0,
+            32,
+            0,
+            28
+        )
+
+    TimeoutMinusButton.Position =
+        UDim2.new(
+            1,
+            -75,
+            0,
+            110
+        )
+
+    TimeoutMinusButton.BackgroundColor3 =
+        Color3.fromRGB(
+            55,
+            55,
+            55
+        )
+
+    TimeoutMinusButton.BorderSizePixel = 0
+
+    TimeoutMinusButton.Text = "-"
+
+    TimeoutMinusButton.TextColor3 =
+        Color3.fromRGB(
+            255,
+            255,
+            255
+        )
+
+    TimeoutMinusButton.TextSize = 18
+
+    TimeoutMinusButton.Font =
+        Enum.Font.GothamBold
+
+    TimeoutMinusButton.Parent =
+        MainFrame
+
+    local timeoutMinusCorner =
+        Instance.new("UICorner")
+
+    timeoutMinusCorner.CornerRadius =
+        UDim.new(
+            0,
+            6
+        )
+
+    timeoutMinusCorner.Parent =
+        TimeoutMinusButton
+
+    --==================================================
+    -- TIMEOUT PLUS
+    --==================================================
+
+    TimeoutPlusButton =
+        Instance.new("TextButton")
+
+    TimeoutPlusButton.Name =
+        "TimeoutPlus"
+
+    TimeoutPlusButton.Size =
+        UDim2.new(
+            0,
+            32,
+            0,
+            28
+        )
+
+    TimeoutPlusButton.Position =
+        UDim2.new(
+            1,
+            -38,
+            0,
+            110
+        )
+
+    TimeoutPlusButton.BackgroundColor3 =
+        Color3.fromRGB(
+            55,
+            55,
+            55
+        )
+
+    TimeoutPlusButton.BorderSizePixel = 0
+
+    TimeoutPlusButton.Text = "+"
+
+    TimeoutPlusButton.TextColor3 =
+        Color3.fromRGB(
+            255,
+            255,
+            255
+        )
+
+    TimeoutPlusButton.TextSize = 18
+
+    TimeoutPlusButton.Font =
+        Enum.Font.GothamBold
+
+    TimeoutPlusButton.Parent =
+        MainFrame
+
+    local timeoutPlusCorner =
+        Instance.new("UICorner")
+
+    timeoutPlusCorner.CornerRadius =
+        UDim.new(
+            0,
+            6
+        )
+
+    timeoutPlusCorner.Parent =
+        TimeoutPlusButton
 
     --==================================================
     -- DRAG
@@ -841,6 +1103,26 @@ local function createGUI()
 
         end
     )
+
+    TimeoutMinusButton.MouseButton1Click:Connect(
+        function()
+
+            changePhotoTimeout(
+                -PHOTO_TIMEOUT_STEP
+            )
+
+        end
+    )
+
+    TimeoutPlusButton.MouseButton1Click:Connect(
+        function()
+
+            changePhotoTimeout(
+                PHOTO_TIMEOUT_STEP
+            )
+
+        end
+    )
 end
 
 --==================================================
@@ -866,10 +1148,20 @@ local function updateGUI()
 
     end
 
+    if TimeoutLabel then
+
+        TimeoutLabel.Text =
+            "Timeout: "
+            .. tostring(
+                S.PhotoTimeout
+            )
+            .. "s"
+
+    end
+
     if State.farming then
 
-        ToggleButton.Text =
-            "ON"
+        ToggleButton.Text = "ON"
 
         ToggleButton.BackgroundColor3 =
             Color3.fromRGB(
@@ -878,8 +1170,17 @@ local function updateGUI()
                 80
             )
 
-        StatusLabel.Text =
-            "FARMING"
+        if State.flyEnabled then
+
+            StatusLabel.Text =
+                "FARMING + FLY"
+
+        else
+
+            StatusLabel.Text =
+                "FARMING"
+
+        end
 
         StatusLabel.TextColor3 =
             Color3.fromRGB(
@@ -890,8 +1191,7 @@ local function updateGUI()
 
     else
 
-        ToggleButton.Text =
-            "OFF"
+        ToggleButton.Text = "OFF"
 
         ToggleButton.BackgroundColor3 =
             Color3.fromRGB(
@@ -900,8 +1200,7 @@ local function updateGUI()
                 45
             )
 
-        StatusLabel.Text =
-            "OFF"
+        StatusLabel.Text = "OFF"
 
         StatusLabel.TextColor3 =
             Color3.fromRGB(
@@ -944,6 +1243,16 @@ local function bindCharacter(character)
             object.CanCollide = true
         end
 
+    end
+
+    if State.farming
+        and S.FlyEnabled then
+
+        task.wait(0.2)
+
+        if State.farming then
+            startFly()
+        end
     end
 end
 
@@ -1005,6 +1314,230 @@ local function setCollision(enabled)
 end
 
 --==================================================
+-- REAL FLY
+--==================================================
+
+local function destroyFlyObjects()
+
+    if State.flyVelocity then
+
+        pcall(function()
+            State.flyVelocity:Destroy()
+        end)
+
+        State.flyVelocity = nil
+    end
+
+    if State.flyOrientation then
+
+        pcall(function()
+            State.flyOrientation:Destroy()
+        end)
+
+        State.flyOrientation = nil
+    end
+
+    if State.flyAttachment then
+
+        pcall(function()
+            State.flyAttachment:Destroy()
+        end)
+
+        State.flyAttachment = nil
+    end
+end
+
+stopFly = function()
+
+    State.flyEnabled = false
+
+    if State.flyConnection then
+
+        State.flyConnection:Disconnect()
+
+        State.flyConnection = nil
+    end
+
+    destroyFlyObjects()
+
+    if Humanoid then
+
+        Humanoid.PlatformStand = false
+        Humanoid.AutoRotate = true
+
+    end
+
+    if HRP then
+
+        HRP.AssemblyLinearVelocity =
+            Vector3.zero
+
+        HRP.AssemblyAngularVelocity =
+            Vector3.zero
+
+    end
+end
+
+startFly = function()
+
+    if not S.FlyEnabled then
+        return
+    end
+
+    if not HRP or not Humanoid then
+        return
+    end
+
+    if not HRP.Parent then
+        return
+    end
+
+    stopFly()
+
+    State.flyEnabled = true
+
+    --==================================================
+    -- ATTACHMENT
+    --==================================================
+
+    local attachment =
+        Instance.new(
+            "Attachment"
+        )
+
+    attachment.Name =
+        "PhotoFarmFlyAttachment"
+
+    attachment.Parent = HRP
+
+    State.flyAttachment =
+        attachment
+
+    --==================================================
+    -- LINEAR VELOCITY
+    --==================================================
+
+    local velocity =
+        Instance.new(
+            "LinearVelocity"
+        )
+
+    velocity.Name =
+        "PhotoFarmFlyVelocity"
+
+    velocity.Attachment0 =
+        attachment
+
+    velocity.RelativeTo =
+        Enum.ActuatorRelativeTo.World
+
+    velocity.VelocityConstraintMode =
+        Enum.VelocityConstraintMode.Vector
+
+    velocity.VectorVelocity =
+        Vector3.zero
+
+    velocity.ForceLimitsEnabled = false
+    velocity.MaxForce = math.huge
+
+    velocity.Parent = HRP
+
+    State.flyVelocity =
+        velocity
+
+    --==================================================
+    -- ORIENTATION
+    --==================================================
+
+    local orientation =
+        Instance.new(
+            "AlignOrientation"
+        )
+
+    orientation.Name =
+        "PhotoFarmFlyOrientation"
+
+    orientation.Attachment0 =
+        attachment
+
+    orientation.Mode =
+        Enum.OrientationAlignmentMode.OneAttachment
+
+    orientation.RigidityEnabled = true
+    orientation.MaxTorque = math.huge
+    orientation.Responsiveness = 200
+
+    orientation.CFrame =
+        HRP.CFrame
+
+    orientation.Parent = HRP
+
+    State.flyOrientation =
+        orientation
+
+    --==================================================
+    -- HUMANOID
+    --==================================================
+
+    Humanoid.PlatformStand = true
+    Humanoid.AutoRotate = false
+
+    --==================================================
+    -- KEEP AIRBORNE
+    --==================================================
+
+    State.flyConnection =
+        RunService.Heartbeat:Connect(
+            function()
+
+                if not State.farming then
+
+                    stopFly()
+
+                    return
+                end
+
+                if not State.flyEnabled then
+                    return
+                end
+
+                if not HRP
+                    or not HRP.Parent then
+
+                    stopFly()
+
+                    return
+                end
+
+                if not State.flyVelocity
+                    or not State.flyVelocity.Parent then
+
+                    stopFly()
+
+                    if State.farming then
+                        startFly()
+                    end
+
+                    return
+                end
+
+                --==================================================
+                -- ZERO VELOCITY = HOVER
+                --==================================================
+
+                State.flyVelocity.VectorVelocity =
+                    Vector3.zero
+
+                HRP.AssemblyAngularVelocity =
+                    Vector3.zero
+
+            end
+        )
+
+    updateGUI()
+end
+
+--==================================================
 -- CANCEL TWEEN
 --==================================================
 
@@ -1017,35 +1550,9 @@ local function cancelTween()
         end)
 
         currentTween = nil
-
     end
 
     State.tweening = false
-end
-
---==================================================
--- STOP FARMING
---==================================================
-
-local function stopFarming(reason)
-
-    State.farming = false
-    State.processing = false
-    State.tweening = false
-    State.restarting = false
-
-    State.stopReason =
-        tostring(
-            reason or "Stopped"
-        )
-
-    State.targetPlayer = ""
-    State.targetUsername = ""
-
-    cancelTween()
-    setCollision(true)
-
-    updateGUI()
 end
 
 --==================================================
@@ -1058,8 +1565,7 @@ local function normalizeText(text)
         return ""
     end
 
-    text = tostring(text)
-    text = text:lower()
+    text = tostring(text):lower()
 
     local prefixes = {
 
@@ -1099,7 +1605,6 @@ local function normalizeText(text)
 
         text =
             text:sub(5)
-
     end
 
     text =
@@ -1137,7 +1642,7 @@ local function normalizePlayerName(text)
 end
 
 --==================================================
--- GET TASK TEXT
+-- GET TASK
 --==================================================
 
 local function getTaskText()
@@ -1188,7 +1693,7 @@ local function getTaskText()
 end
 
 --==================================================
--- PHOTO PREFIX
+-- PHOTO PREFIXES
 --==================================================
 
 local PHOTO_PREFIXES = {
@@ -1240,7 +1745,6 @@ local function getPhotoTargetText(taskText)
             if target ~= "" then
                 return target
             end
-
         end
     end
 
@@ -1268,14 +1772,13 @@ local function findModelFromInfo(info)
 
         current =
             current.Parent
-
     end
 
     return nil
 end
 
 --==================================================
--- MATCH INFO
+-- INFO MATCH
 --==================================================
 
 local function infoMatchesTarget(
@@ -1344,7 +1847,7 @@ local function infoMatchesTarget(
 end
 
 --==================================================
--- REAL PLAYER FROM MODEL
+-- REAL PLAYER
 --==================================================
 
 local function getRealPlayerFromModel(model)
@@ -1382,12 +1885,10 @@ local function getRealPlayerFromModel(model)
 end
 
 --==================================================
--- FIND PLAYER USING INFO
+-- FIND PLAYER
 --==================================================
 
-local function findPlayerByInfo(
-    targetText
-)
+local function findPlayerByInfo(targetText)
 
     if not targetText then
         return nil, nil, nil
@@ -1407,7 +1908,6 @@ local function findPlayerByInfo(
 
     --==================================================
     -- PASS 1
-    -- CURRENT CHARACTER INFO
     --==================================================
 
     for _, player in ipairs(
@@ -1458,7 +1958,6 @@ local function findPlayerByInfo(
 
     --==================================================
     -- PASS 2
-    -- WORKSPACE INFO SCAN
     --==================================================
 
     for _, object in ipairs(
@@ -1517,7 +2016,6 @@ local function findPlayerByInfo(
 
     --==================================================
     -- PASS 3
-    -- REAL USERNAME / DISPLAY NAME
     --==================================================
 
     for _, player in ipairs(
@@ -1618,7 +2116,7 @@ local function resolveArea(taskText)
 end
 
 --==================================================
--- PLAYER PHOTO TASK
+-- PLAYER TASK
 --==================================================
 
 local function isRealPlayerPhotoTask(taskText)
@@ -1646,12 +2144,27 @@ local function isRealPlayerPhotoTask(taskText)
             targetText
         )
 
-    if player then
-        return true
+    return player ~= nil
+end
+
+local function isPlayerPhotoTask(taskText)
+
+    if not taskText then
+        return false
     end
 
-    return false
+    if resolveArea(taskText) then
+        return false
+    end
+
+    return isRealPlayerPhotoTask(
+        taskText
+    )
 end
+
+--==================================================
+-- TARGET PLAYER TEXT
+--==================================================
 
 local function getTargetPlayerText(taskText)
 
@@ -1728,31 +2241,7 @@ local function findPlayerTarget(taskText)
 end
 
 --==================================================
--- PLAYER TASK CHECK
---==================================================
-
-local function isPlayerPhotoTask(taskText)
-
-    if not taskText then
-        return false
-    end
-
-    local area =
-        resolveArea(
-            taskText
-        )
-
-    if area then
-        return false
-    end
-
-    return isRealPlayerPhotoTask(
-        taskText
-    )
-end
-
---==================================================
--- WHITELIST CHECK
+-- WHITELIST
 --==================================================
 
 local function isWhitelistedTask(taskText)
@@ -1774,7 +2263,7 @@ local function isWhitelistedTask(taskText)
 end
 
 --==================================================
--- REJECT MUSIC ROOM
+-- REJECT MUSIC
 --==================================================
 
 local function isRejectedTask(taskText)
@@ -1783,16 +2272,13 @@ local function isRejectedTask(taskText)
         return false
     end
 
-    local area =
-        resolveArea(
-            taskText
-        )
-
-    return area == "Music Room"
+    return resolveArea(
+        taskText
+    ) == "Music Room"
 end
 
 --==================================================
--- STOP CURRENT JOB
+-- STOP JOB
 --==================================================
 
 local function stopCurrentJob()
@@ -1814,7 +2300,7 @@ local function stopCurrentJob()
 end
 
 --==================================================
--- START NEW JOB
+-- START JOB
 --==================================================
 
 local function startNewJob()
@@ -1837,6 +2323,64 @@ local function startNewJob()
         end)
 
     return success
+end
+
+--==================================================
+-- RESTART JOB AFTER TIMEOUT
+--==================================================
+
+local function restartJobAfterPhotoTimeout()
+
+    if not State.farming then
+        return false
+    end
+
+    State.stopReason =
+        "Photo timeout: "
+        .. tostring(
+            S.PhotoTimeout
+        )
+        .. "s"
+
+    State.processing = false
+    State.tweening = false
+    State.restarting = true
+
+    State.targetPlayer = ""
+    State.targetUsername = ""
+
+    cancelTween()
+
+    -- STOP CURRENT JOB
+
+    stopCurrentJob()
+
+    State.restartCount += 1
+
+    task.wait(
+        S.RestartDelay
+    )
+
+    if not State.farming then
+
+        State.restarting = false
+
+        return false
+    end
+
+    -- START AGAIN
+
+    startNewJob()
+
+    task.wait(
+        S.StartDelay
+    )
+
+    State.lastTask = ""
+
+    State.restarting = false
+
+    return true
 end
 
 --==================================================
@@ -2150,7 +2694,7 @@ local function findLocation(taskText)
 end
 
 --==================================================
--- SMOOTH AREA MOVE
+-- AREA TWEEN
 --==================================================
 
 local function smoothTween(targetPosition)
@@ -2239,7 +2783,6 @@ local function smoothTween(targetPosition)
         end
 
         task.wait()
-
     end
 
     connection:Disconnect()
@@ -2253,13 +2796,8 @@ local function smoothTween(targetPosition)
 end
 
 --==================================================
--- TELEPORT ONCE TO PLAYER
+-- TELEPORT PLAYER ONCE
 --==================================================
--- IMPORTANT:
--- Tidak ada loop follow.
--- Tidak ada tween ke player.
--- Target dicari -> posisi dihitung -> teleport SATU KALI.
--- Jarak berasal dari S.PlayerDistance / GUI.
 
 local function teleportToPlayerOnce(target)
 
@@ -2301,20 +2839,13 @@ local function teleportToPlayerOnce(target)
     State.targetUsername =
         player.Name
 
-    --==================================================
-    -- TARGET POSITION
-    --==================================================
-
     local targetPosition =
         targetHRP.Position
 
-    -- Arah dari target ke posisi kita.
     local direction =
         HRP.Position
         - targetPosition
 
-    -- Jika terlalu dekat / sama posisi,
-    -- gunakan arah belakang target.
     if direction.Magnitude < 0.1 then
 
         direction =
@@ -2324,12 +2855,7 @@ local function teleportToPlayerOnce(target)
 
         direction =
             direction.Unit
-
     end
-
-    --==================================================
-    -- DISTANCE
-    --==================================================
 
     local distance =
         math.max(
@@ -2343,19 +2869,11 @@ local function teleportToPlayerOnce(target)
         targetPosition
         + direction * distance
 
-    --==================================================
-    -- FACE TARGET
-    --==================================================
-
     local newCFrame =
         CFrame.lookAt(
             teleportPosition,
             targetPosition
         )
-
-    --==================================================
-    -- TELEPORT SEKALI
-    --==================================================
 
     cancelTween()
 
@@ -2487,7 +3005,7 @@ local function processPlayerTask(taskText)
     end
 
     --==================================================
-    -- FIND PLAYER
+    -- FIND TARGET
     --==================================================
 
     local target =
@@ -2497,17 +3015,7 @@ local function processPlayerTask(taskText)
 
     if not target then
 
-        State.stopReason =
-            "Player not found: "
-            .. tostring(
-                getTargetPlayerText(
-                    taskText
-                ) or "Unknown"
-            )
-
-        State.lastTask = ""
-
-        restartUntilValidTask()
+        restartJobAfterPhotoTimeout()
 
         return false
     end
@@ -2539,61 +3047,107 @@ local function processPlayerTask(taskText)
     end
 
     --==================================================
-    -- GET CURRENT PLAYER POSITION
+    -- PHOTO TIMER START
     --==================================================
 
-    local character =
-        realPlayer.Character
+    local photoStart =
+        os.clock()
 
-    local targetHRP
+    local photoTaken = false
 
-    if character then
+    while State.farming do
 
-        targetHRP =
-            character:FindFirstChild(
-                "HumanoidRootPart"
-            )
+        local elapsed =
+            os.clock()
+            - photoStart
 
+        --==================================================
+        -- TIMEOUT
+        --==================================================
+
+        if elapsed >=
+            S.PhotoTimeout then
+
+            restartJobAfterPhotoTimeout()
+
+            return false
+        end
+
+        --==================================================
+        -- GET CURRENT CHARACTER
+        --==================================================
+
+        local character =
+            realPlayer.Character
+
+        local targetHRP
+
+        if character then
+
+            targetHRP =
+                character:FindFirstChild(
+                    "HumanoidRootPart"
+                )
+        end
+
+        --==================================================
+        -- CHECK DISTANCE
+        --==================================================
+
+        if targetHRP
+            and HRP then
+
+            local distance =
+                (
+                    HRP.Position
+                    - targetHRP.Position
+                ).Magnitude
+
+            if distance <=
+                S.PhotoRange then
+
+                local success =
+                    takePhoto(
+                        targetHRP.Position
+                    )
+
+                if success then
+
+                    photoTaken = true
+
+                    break
+                end
+            end
+        end
+
+        task.wait(0.1)
     end
 
-    local photoPosition
+    --==================================================
+    -- SUCCESS
+    --==================================================
 
-    if targetHRP then
+    if photoTaken then
 
-        photoPosition =
-            targetHRP.Position
+        setCollision(true)
 
-    else
+        State.tweening = false
+        State.processing = false
 
-        photoPosition =
-            target.position
+        task.wait(0.5)
 
+        State.lastTask = ""
+        State.targetPlayer = ""
+        State.targetUsername = ""
+
+        return true
     end
 
-    --==================================================
-    -- PHOTO
-    --==================================================
-
-    takePhoto(
-        photoPosition
-    )
-
-    setCollision(true)
-
-    State.tweening = false
-    State.processing = false
-
-    task.wait(0.5)
-
-    State.lastTask = ""
-    State.targetPlayer = ""
-    State.targetUsername = ""
-
-    return true
+    return false
 end
 
 --==================================================
--- PROCESS AREA TASK
+-- PROCESS AREA
 --==================================================
 
 local function processAreaTask(taskText)
@@ -2707,8 +3261,7 @@ local function processTask()
     ) then
 
         State.stopReason =
-            "Music Room rejected: "
-            .. tostring(taskText)
+            "Music Room rejected"
 
         restartUntilValidTask()
 
@@ -2716,7 +3269,7 @@ local function processTask()
     end
 
     --==================================================
-    -- AREA PRIORITY
+    -- AREA
     --==================================================
 
     local area =
@@ -2744,7 +3297,7 @@ local function processTask()
     end
 
     --==================================================
-    -- PLAYER PHOTO
+    -- PLAYER
     --==================================================
 
     if isPlayerPhotoTask(
@@ -2771,7 +3324,7 @@ local function processTask()
     end
 
     --==================================================
-    -- INVALID TASK
+    -- INVALID
     --==================================================
 
     State.stopReason =
@@ -2784,8 +3337,6 @@ end
 --==================================================
 -- FARM LOOP
 --==================================================
-
-local farmLoopRunning = false
 
 local function farmLoop()
 
@@ -2815,7 +3366,7 @@ end
 -- START FARMING
 --==================================================
 
-function startFarming()
+startFarming = function()
 
     if State.farming then
         return
@@ -2846,7 +3397,19 @@ function startFarming()
 
     setCollision(true)
 
+    --==================================================
+    -- START FLY
+    --==================================================
+
+    if S.FlyEnabled then
+        startFly()
+    end
+
     updateGUI()
+
+    --==================================================
+    -- START JOB
+    --==================================================
 
     startNewJob()
 
@@ -2864,12 +3427,14 @@ function startFarming()
 end
 
 --==================================================
--- STOP FARMING FROM GUI
+-- STOP FARMING
 --==================================================
 
-function stopFarmingFromGUI()
+stopFarmingFromGUI = function()
 
     if not State.farming then
+
+        stopFly()
 
         updateGUI()
 
@@ -2877,6 +3442,16 @@ function stopFarmingFromGUI()
     end
 
     cancelTween()
+
+    --==================================================
+    -- STOP FLY
+    --==================================================
+
+    stopFly()
+
+    --==================================================
+    -- STOP JOB
+    --==================================================
 
     stopCurrentJob()
 
@@ -2908,7 +3483,6 @@ if character then
     bindCharacter(
         character
     )
-
 end
 
 LocalPlayer.CharacterAdded:Connect(
@@ -2942,7 +3516,6 @@ task.spawn(function()
         attempts += 1
 
         task.wait(1)
-
     end
 
     if not phoneScreenPush
@@ -2953,13 +3526,15 @@ task.spawn(function()
 
         State.farming = false
 
+        stopFly()
+
         updateGUI()
 
         return
     end
 
     --==================================================
-    -- AUTO START DISABLED
+    -- AUTO START
     --==================================================
 
     if S.Enabled
@@ -2971,8 +3546,9 @@ task.spawn(function()
 
         State.farming = false
 
-        updateGUI()
+        stopFly()
 
+        updateGUI()
     end
 end)
 
@@ -2997,29 +3573,106 @@ _G.StopFarming = function()
 end
 
 --==================================================
--- SET DISTANCE
+-- SET PLAYER DISTANCE
 --==================================================
 
 _G.SetPlayerDistance = function(value)
 
-    setPlayerDistance(
-        value
-    )
+    setPlayerDistance(value)
 
     print(
         "Player Distance:",
         S.PlayerDistance
     )
-
 end
 
 --==================================================
--- GET DISTANCE
+-- GET PLAYER DISTANCE
 --==================================================
 
 _G.GetPlayerDistance = function()
 
     return S.PlayerDistance
+
+end
+
+--==================================================
+-- SET PHOTO TIMEOUT
+--==================================================
+
+_G.SetPhotoTimeout = function(value)
+
+    setPhotoTimeout(value)
+
+    print(
+        "Photo Timeout:",
+        S.PhotoTimeout
+    )
+end
+
+--==================================================
+-- GET PHOTO TIMEOUT
+--==================================================
+
+_G.GetPhotoTimeout = function()
+
+    return S.PhotoTimeout
+
+end
+
+--==================================================
+-- START FLY
+--==================================================
+
+_G.StartFly = function()
+
+    if State.farming then
+        startFly()
+    end
+
+end
+
+--==================================================
+-- STOP FLY
+--==================================================
+
+_G.StopFly = function()
+
+    stopFly()
+
+    updateGUI()
+
+end
+
+--==================================================
+-- SET FLY
+--==================================================
+
+_G.SetFly = function(enabled)
+
+    S.FlyEnabled =
+        enabled == true
+
+    if S.FlyEnabled
+        and State.farming then
+
+        startFly()
+
+    else
+
+        stopFly()
+    end
+
+    updateGUI()
+end
+
+--==================================================
+-- GET FLY
+--==================================================
+
+_G.GetFly = function()
+
+    return State.flyEnabled
 
 end
 
@@ -3043,6 +3696,9 @@ _G.GetStatus = function()
         restarting =
             State.restarting,
 
+        flyEnabled =
+            State.flyEnabled,
+
         lastTask =
             State.lastTask,
 
@@ -3063,8 +3719,10 @@ _G.GetStatus = function()
 
         playerDistance =
             S.PlayerDistance,
-    }
 
+        photoTimeout =
+            S.PhotoTimeout,
+    }
 end
 
 --==================================================
@@ -3090,6 +3748,11 @@ _G.PhotoFarmStatus = function()
     print(
         "Restarting    :",
         State.restarting
+    )
+
+    print(
+        "Fly           :",
+        State.flyEnabled
     )
 
     print(
@@ -3128,7 +3791,11 @@ _G.PhotoFarmStatus = function()
     )
 
     print(
-        "================================"
+        "Photo Timeout :",
+        S.PhotoTimeout
     )
 
+    print(
+        "================================"
+    )
 end
