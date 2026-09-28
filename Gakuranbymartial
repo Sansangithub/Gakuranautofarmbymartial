@@ -1,0 +1,1070 @@
+--// Made by @DirectMemoryAccess
+--// Photo Job Farming
+--// WHITELIST AREA ONLY
+--// MUSIC ROOM = AUTO REROLL
+--// INVALID TASK = STOP -> RESTART -> CHECK AGAIN
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace         = game:GetService("Workspace")
+local TweenService      = game:GetService("TweenService")
+
+--==================================================
+-- SETTINGS
+--==================================================
+
+local Settings = {
+    Farming = {
+        Enabled      = true,
+        AutoStart    = true,
+
+        RefreshRate  = 0.15,
+
+        -- FAST MOVEMENT
+        TweenSpeed   = 100,
+        MaxDistance  = 1.2,
+        MaxDuration  = 0.5,
+        MinDuration  = 0.08,
+
+        PhotoRange   = 10,
+        MaxAttempts  = 30,
+
+        -- FAST STOP / START
+        RestartDelay    = 0.05,
+        StartDelay      = 0.10,
+        AssignmentWait  = 0.08,
+    }
+}
+
+local S = Settings.Farming
+
+--==================================================
+-- WHITELIST AREA
+--==================================================
+
+local AREA_TASKS = {
+
+    {
+        canonical = "Rooftop",
+        aliases = {
+            "rooftop",
+            "roof"
+        }
+    },
+
+    {
+        canonical = "Courtyard",
+        aliases = {
+            "courtyard",
+            "court yard"
+        }
+    },
+
+    {
+        canonical = "Cafeteria",
+        aliases = {
+            "cafeteria",
+            "cafe",
+            "lunch room",
+            "lunchroom"
+        }
+    },
+
+    {
+        canonical = "Basketball Court",
+        aliases = {
+            "basketball court",
+            "basketball",
+            "bball court"
+        }
+    },
+
+    {
+        canonical = "Dojo Room",
+        aliases = {
+            "dojo room",
+            "dojo"
+        }
+    },
+
+    {
+        canonical = "Music Room",
+        aliases = {
+            "music room",
+            "music"
+        }
+    },
+
+    {
+        canonical = "Parking Lot",
+        aliases = {
+            "parking lot",
+            "parking",
+            "car park"
+        }
+    },
+
+    {
+        canonical = "Nishikata High Entrance",
+        aliases = {
+            "nishikata high entrance",
+            "school entrance",
+            "entrance",
+            "nishikata entrance",
+            "high entrance",
+            "school front",
+            "front entrance"
+        }
+    },
+
+    {
+        canonical = "Infirmary",
+        aliases = {
+            "infirmary",
+            "nurse office",
+            "nurse's office",
+            "medical room"
+        }
+    },
+
+    {
+        canonical = "Study Room",
+        aliases = {
+            "study room",
+            "study",
+            "library"
+        }
+    },
+
+    {
+        canonical = "Lounge",
+        aliases = {
+            "lounge"
+        }
+    },
+
+    {
+        canonical = "GAKUMART",
+        aliases = {
+            "gakumart",
+            "gaku mart",
+            "mart",
+            "store",
+            "shop"
+        }
+    },
+
+    {
+        canonical = "Nishikata District",
+        aliases = {
+            "nishikata district",
+            "district",
+            "nishikata"
+        }
+    }
+}
+
+--==================================================
+-- PLAYER
+--==================================================
+
+local LocalPlayer = Players.LocalPlayer
+
+local Character
+local HRP
+local Humanoid
+
+--==================================================
+-- REMOTES
+--==================================================
+
+local Remotes
+
+local phoneScreenPush
+local photoJobSubmit
+
+--==================================================
+-- STATE
+--==================================================
+
+local State = {
+    farming       = false,
+    processing    = false,
+    tweening      = false,
+    restarting    = false,
+
+    lastTask      = "",
+    taskCount     = 0,
+    restartCount  = 0,
+
+    stopReason    = ""
+}
+
+local currentTween = nil
+
+--==================================================
+-- CHARACTER
+--==================================================
+
+local function bindCharacter(character)
+
+    Character = character
+
+    HRP = character:WaitForChild(
+        "HumanoidRootPart",
+        10
+    )
+
+    Humanoid = character:WaitForChild(
+        "Humanoid",
+        10
+    )
+
+    if not HRP then
+        return
+    end
+
+    for _, object in ipairs(
+        character:GetDescendants()
+    ) do
+
+        if object:IsA("BasePart") then
+            object.CanCollide = true
+        end
+
+    end
+end
+
+--==================================================
+-- REMOTE FINDER
+--==================================================
+
+local function findRemotes()
+
+    Remotes =
+        ReplicatedStorage:FindFirstChild(
+            "Remotes"
+        )
+
+    if not Remotes then
+        return false
+    end
+
+    phoneScreenPush =
+        Remotes:FindFirstChild(
+            "PhoneScreenPush"
+        )
+
+    photoJobSubmit =
+        Remotes:FindFirstChild(
+            "PhotoJobSubmit"
+        )
+
+    if not phoneScreenPush then
+        return false
+    end
+
+    if not photoJobSubmit then
+        return false
+    end
+
+    return true
+end
+
+--==================================================
+-- COLLISION
+--==================================================
+
+local function setCollision(enabled)
+
+    if not Character then
+        return
+    end
+
+    for _, object in ipairs(
+        Character:GetDescendants()
+    ) do
+
+        if object:IsA("BasePart") then
+            object.CanCollide = enabled
+        end
+
+    end
+end
+
+--==================================================
+-- CANCEL TWEEN
+--==================================================
+
+local function cancelTween()
+
+    if currentTween then
+
+        pcall(function()
+            currentTween:Cancel()
+        end)
+
+        currentTween = nil
+    end
+
+    State.tweening = false
+end
+
+--==================================================
+-- STOP FARMING
+--==================================================
+
+local function stopFarming(reason)
+
+    State.farming = false
+    State.processing = false
+    State.tweening = false
+    State.restarting = false
+
+    State.stopReason =
+        tostring(
+            reason or "Stopped"
+        )
+
+    cancelTween()
+
+    setCollision(true)
+end
+
+--==================================================
+-- NORMALIZE TEXT
+--==================================================
+
+local function normalizeText(text)
+
+    if not text then
+        return ""
+    end
+
+    text = tostring(text)
+    text = text:lower()
+
+    local prefixes = {
+        "get a photo of ",
+        "take a photo of ",
+        "take photo of ",
+        "a photo of ",
+        "photo of ",
+        "photograph of ",
+        "photograph ",
+        "take a picture of ",
+        "take picture of ",
+        "picture of ",
+    }
+
+    for _, prefix in ipairs(prefixes) do
+
+        if text:sub(
+            1,
+            #prefix
+        ) == prefix then
+
+            text =
+                text:sub(
+                    #prefix + 1
+                )
+
+            break
+        end
+    end
+
+    if text:sub(1, 4) == "the " then
+        text = text:sub(5)
+    end
+
+    text =
+        text:match(
+            "^%s*(.-)%s*$"
+        )
+
+    return text
+end
+
+--==================================================
+-- RESOLVE AREA
+--==================================================
+
+local function resolveArea(taskText)
+
+    local normalized =
+        normalizeText(taskText)
+
+    if normalized == "" then
+        return nil
+    end
+
+    -- Alias matching
+    for _, entry in ipairs(
+        AREA_TASKS
+    ) do
+
+        for _, alias in ipairs(
+            entry.aliases
+        ) do
+
+            if normalized == alias then
+                return entry.canonical
+            end
+
+            if normalized:find(
+                alias,
+                1,
+                true
+            ) then
+
+                return entry.canonical
+            end
+        end
+    end
+
+    -- Canonical matching
+    for _, entry in ipairs(
+        AREA_TASKS
+    ) do
+
+        local canonical =
+            entry.canonical:lower()
+
+        if normalized == canonical then
+            return entry.canonical
+        end
+
+        if normalized:find(
+            canonical,
+            1,
+            true
+        ) then
+
+            return entry.canonical
+        end
+    end
+
+    return nil
+end
+
+--==================================================
+-- CHECK WHITELIST
+--==================================================
+
+local function isWhitelistedTask(taskText)
+
+    if not taskText then
+        return false
+    end
+
+    return resolveArea(taskText) ~= nil
+end
+
+--==================================================
+-- REJECTED TASK
+-- MUSIC ROOM ALWAYS REROLL
+--==================================================
+
+local function isRejectedTask(taskText)
+
+    if not taskText then
+        return false
+    end
+
+    local normalized =
+        normalizeText(taskText)
+
+    if normalized == "music room" then
+        return true
+    end
+
+    if normalized:find(
+        "music room",
+        1,
+        true
+    ) then
+
+        return true
+    end
+
+    return false
+end
+
+--==================================================
+-- GET TASK TEXT
+--==================================================
+
+local function getTaskText()
+
+    local PlayerGui =
+        LocalPlayer:FindFirstChild(
+            "PlayerGui"
+        )
+
+    if not PlayerGui then
+        return nil
+    end
+
+    local PhotoJobGui =
+        PlayerGui:FindFirstChild(
+            "PhotoJobGui"
+        )
+
+    if not PhotoJobGui then
+        return nil
+    end
+
+    local Card =
+        PhotoJobGui:FindFirstChild(
+            "Card"
+        )
+
+    if not Card then
+        return nil
+    end
+
+    local Task =
+        Card:FindFirstChild(
+            "Task"
+        )
+
+    if not Task then
+        return nil
+    end
+
+    if not Task:IsA("TextLabel")
+        and not Task:IsA("TextButton") then
+
+        return nil
+    end
+
+    return Task.Text
+end
+
+--==================================================
+-- STOP CURRENT JOB
+--==================================================
+
+local function stopCurrentJob()
+
+    if not photoJobSubmit then
+        return false
+    end
+
+    local success =
+        pcall(function()
+
+            photoJobSubmit:InvokeServer(
+                "Stop"
+            )
+
+        end)
+
+    return success
+end
+
+--==================================================
+-- START NEW JOB
+--==================================================
+
+local function startNewJob()
+
+    if not photoJobSubmit then
+        return false
+    end
+
+    local success =
+        pcall(function()
+
+            photoJobSubmit:InvokeServer(
+                "Start"
+            )
+
+        end)
+
+    return success
+end
+
+--==================================================
+-- RESTART UNTIL VALID
+--==================================================
+
+local function restartUntilValidTask()
+
+    if not State.farming then
+        return false
+    end
+
+    if State.restarting then
+        return false
+    end
+
+    State.restarting = true
+    State.processing = false
+    State.tweening = false
+
+    cancelTween()
+    setCollision(true)
+
+    while State.farming do
+
+        --==========================================
+        -- CHECK CURRENT TASK
+        --==========================================
+
+        local taskText =
+            getTaskText()
+
+        if taskText
+            and taskText ~= "" then
+
+            local lower =
+                taskText:lower()
+
+            if not lower:find(
+                "waiting for assignment",
+                1,
+                true
+            ) then
+
+                if isWhitelistedTask(
+                    taskText
+                )
+                and not isRejectedTask(
+                    taskText
+                ) then
+
+                    State.lastTask = ""
+                    State.restarting = false
+
+                    return true
+                end
+            end
+        end
+
+        --==========================================
+        -- STOP
+        --==========================================
+
+        stopCurrentJob()
+
+        State.restartCount += 1
+
+        task.wait(
+            S.RestartDelay
+        )
+
+        if not State.farming then
+            break
+        end
+
+        --==========================================
+        -- START
+        --==========================================
+
+        startNewJob()
+
+        task.wait(
+            S.StartDelay
+        )
+
+        --==========================================
+        -- CHECK ASSIGNMENT
+        --==========================================
+
+        for i = 1, S.MaxAttempts do
+
+            if not State.farming then
+                break
+            end
+
+            local newTask =
+                getTaskText()
+
+            if newTask
+                and newTask ~= "" then
+
+                local lower =
+                    newTask:lower()
+
+                if not lower:find(
+                    "waiting for assignment",
+                    1,
+                    true
+                ) then
+
+                    --==================================
+                    -- VALID + NOT MUSIC
+                    --==================================
+
+                    if isWhitelistedTask(
+                        newTask
+                    )
+                    and not isRejectedTask(
+                        newTask
+                    ) then
+
+                        State.lastTask = ""
+                        State.restarting = false
+
+                        return true
+                    end
+
+                    --==================================
+                    -- INVALID / MUSIC
+                    -- LOOP AGAIN
+                    --==================================
+
+                    break
+                end
+            end
+
+            task.wait(
+                S.AssignmentWait
+            )
+        end
+    end
+
+    State.restarting = false
+
+    return false
+end
+
+--==================================================
+-- FIND LOCATION
+--==================================================
+
+local function findLocation(taskText)
+
+    local area =
+        resolveArea(taskText)
+
+    if not area then
+        return nil
+    end
+
+    local searchTerms = {}
+
+    table.insert(
+        searchTerms,
+        area:lower()
+    )
+
+    local normalized =
+        normalizeText(taskText)
+
+    table.insert(
+        searchTerms,
+        normalized
+    )
+
+    local bestPart = nil
+    local bestScore = 0
+
+    for _, object in ipairs(
+        Workspace:GetDescendants()
+    ) do
+
+        if object:IsA("BasePart") then
+
+            local objectName =
+                object.Name:lower()
+
+            for _, term in ipairs(
+                searchTerms
+            ) do
+
+                if term ~= ""
+                    and objectName:find(
+                        term,
+                        1,
+                        true
+                    ) then
+
+                    local score =
+                        #term
+
+                    if score > bestScore then
+
+                        bestScore = score
+                        bestPart = object
+                    end
+                end
+            end
+
+            -- PhotoJobLandmark
+            local landmark =
+                object:FindFirstChild(
+                    "PhotoJobLandmark"
+                )
+
+            if landmark
+                and landmark:IsA(
+                    "StringValue"
+                ) then
+
+                local value =
+                    landmark.Value:lower()
+
+                for _, term in ipairs(
+                    searchTerms
+                ) do
+
+                    if term ~= ""
+                        and value:find(
+                            term,
+                            1,
+                            true
+                        ) then
+
+                        local score =
+                            #term + 100
+
+                        if score > bestScore then
+
+                            bestScore = score
+                            bestPart = object
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if bestPart then
+        return bestPart.Position
+    end
+
+    return nil
+end
+
+--==================================================
+-- FAST MOVE
+--==================================================
+
+local function smoothTween(targetPosition)
+
+    if not HRP then
+        return false
+    end
+
+    cancelTween()
+
+    local startPosition =
+        HRP.Position
+
+    local distance =
+        (
+            targetPosition
+            - startPosition
+        ).Magnitude
+
+    -- Very close = instant
+    if distance <= S.MaxDistance then
+
+        HRP.CFrame =
+            CFrame.new(
+                targetPosition
+            )
+
+        setCollision(true)
+
+        return true
+    end
+
+    setCollision(false)
+
+    State.tweening = true
+
+    local duration =
+        math.clamp(
+            distance / S.TweenSpeed,
+            S.MinDuration,
+            S.MaxDuration
+        )
+
+    currentTween =
+        TweenService:Create(
+            HRP,
+
+            TweenInfo.new(
+                duration,
+                Enum.EasingStyle.Linear,
+                Enum.EasingDirection.Out
+            ),
+
+            {
+                CFrame =
+                    CFrame.new(
+                        targetPosition
+                    )
+            }
+        )
+
+    currentTween:Play()
+
+    local completed = false
+
+    local connection
+
+    connection =
+        currentTween.Completed:Connect(
+            function()
+                completed = true
+            end
+        )
+
+    while not completed do
+
+        if not State.farming then
+
+            connection:Disconnect()
+
+            cancelTween()
+            setCollision(true)
+
+            return false
+        end
+
+        task.wait()
+    end
+
+    connection:Disconnect()
+
+    currentTween = nil
+    State.tweening = false
+
+    setCollision(true)
+
+    return true
+end
+
+--==================================================
+-- TAKE PHOTO
+--==================================================
+
+local function takePhoto(targetPosition)
+
+    if not phoneScreenPush
+        or not photoJobSubmit
+        or not HRP then
+
+        return false
+    end
+
+    local bufferData =
+        buffer.create(7)
+
+    buffer.writeu8(
+        bufferData,
+        0,
+        1
+    )
+
+    buffer.writeu8(
+        bufferData,
+        1,
+        4
+    )
+
+    buffer.writeu8(
+        bufferData,
+        2,
+        0
+    )
+
+    buffer.writeu8(
+        bufferData,
+        3,
+        1
+    )
+
+    buffer.writeu8(
+        bufferData,
+        4,
+        1
+    )
+
+    buffer.writeu8(
+        bufferData,
+        5,
+        42
+    )
+
+    buffer.writeu8(
+        bufferData,
+        6,
+        24
+    )
+
+    -- Phone
+    local pushSuccess =
+        pcall(
+            phoneScreenPush.FireServer,
+            phoneScreenPush,
+            bufferData
+        )
+
+    if not pushSuccess then
+        return false
+    end
+
+    task.wait(0.15)
+
+    local lookAt =
+        targetPosition
+        or (
+            HRP.Position
+            + HRP.CFrame.LookVector
+            * 10
+        )
+
+    -- Submit
+    local submitSuccess =
+        pcall(
+            photoJobSubmit.InvokeServer,
+            photoJobSubmit,
+            "Submit",
+            CFrame.new(
+                HRP.Position,
+                lookAt
+            )
+        )
+
+    task.wait(0.15)
+
+    return submitSuccess
+end
+
+--==================================================
+-- PROCESS ONE TASK
+--==================================================
+
+local function processTask()
+
+    if not State.farming then
+        return
+    end
+
+    if State.processing
+        or State.restarting then
+
+        return
+    end
+
+    local taskText =
+        getTaskText()
+
+    -- No assignment
+    if not taskText
+        or taskText == "" then
+
+        return
+    end
+
+    local lower =
+        taskText:lower()
+
+    -- Waiting
+    if lower:find(
+        "waiting for assignment",
