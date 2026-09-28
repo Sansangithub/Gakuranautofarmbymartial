@@ -1068,3 +1068,332 @@ local function processTask()
     -- Waiting
     if lower:find(
         "waiting for assignment",
+        1,
+        true
+    ) then
+
+        return
+    end
+
+    --==============================================
+    -- MUSIC ROOM = IMMEDIATE REROLL
+    --==============================================
+
+    if isRejectedTask(taskText) then
+
+        State.stopReason =
+            "Music Room rejected: "
+            .. tostring(taskText)
+
+        restartUntilValidTask()
+
+        return
+    end
+
+    --==============================================
+    -- WHITELIST
+    --==============================================
+
+    local area =
+        resolveArea(taskText)
+
+    if not area then
+
+        State.stopReason =
+            "Invalid task: "
+            .. tostring(taskText)
+
+        restartUntilValidTask()
+
+        return
+    end
+
+    --==============================================
+    -- DUPLICATE CHECK
+    --==============================================
+
+    if taskText == State.lastTask then
+        return
+    end
+
+    State.processing = true
+    State.lastTask = taskText
+    State.taskCount += 1
+
+    --==============================================
+    -- FIND LOCATION
+    --==============================================
+
+    local position =
+        findLocation(taskText)
+
+    if not position then
+
+        State.processing = false
+        State.lastTask = ""
+
+        return
+    end
+
+    --==============================================
+    -- MOVE
+    --==============================================
+
+    local moved =
+        smoothTween(position)
+
+    if not moved then
+
+        State.processing = false
+
+        return
+    end
+
+    if not State.farming then
+
+        State.processing = false
+
+        return
+    end
+
+    task.wait(0.2)
+
+    --==============================================
+    -- PHOTO
+    --==============================================
+
+    takePhoto(position)
+
+    setCollision(true)
+
+    State.tweening = false
+    State.processing = false
+
+    task.wait(0.5)
+
+    State.lastTask = ""
+end
+
+--==================================================
+-- FARM LOOP
+--==================================================
+
+local function farmLoop()
+
+    while State.farming do
+
+        pcall(function()
+            processTask()
+        end)
+
+        task.wait(
+            S.RefreshRate
+        )
+    end
+
+    setCollision(true)
+end
+
+--==================================================
+-- CHARACTER INITIALIZATION
+--==================================================
+
+local character =
+    LocalPlayer.Character
+
+if character then
+    bindCharacter(character)
+end
+
+LocalPlayer.CharacterAdded:Connect(
+    function(newCharacter)
+
+        bindCharacter(newCharacter)
+
+    end
+)
+
+--==================================================
+-- INITIALIZATION
+--==================================================
+
+task.spawn(function()
+
+    local attempts = 0
+
+    -- Find remotes
+    while not findRemotes()
+        and attempts < 30 do
+
+        attempts += 1
+
+        task.wait(1)
+    end
+
+    if not phoneScreenPush
+        or not photoJobSubmit then
+
+        stopFarming(
+            "PhotoJob remotes not found"
+        )
+
+        return
+    end
+
+    -- First job
+    startNewJob()
+
+    task.wait(
+        S.StartDelay
+    )
+
+    -- Auto start
+    if S.Enabled
+        and S.AutoStart then
+
+        State.farming = true
+        State.processing = false
+        State.restarting = false
+
+        State.lastTask = ""
+        State.taskCount = 0
+        State.restartCount = 0
+        State.stopReason = ""
+
+        task.spawn(
+            farmLoop
+        )
+    end
+end)
+
+--==================================================
+-- GLOBAL START
+--==================================================
+
+_G.StartFarming = function()
+
+    if State.farming then
+        return
+    end
+
+    if not findRemotes() then
+
+        State.stopReason =
+            "PhotoJob remotes not found"
+
+        return
+    end
+
+    State.farming = true
+    State.processing = false
+    State.tweening = false
+    State.restarting = false
+
+    State.lastTask = ""
+    State.taskCount = 0
+    State.restartCount = 0
+    State.stopReason = ""
+
+    setCollision(true)
+
+    startNewJob()
+
+    task.spawn(
+        farmLoop
+    )
+end
+
+--==================================================
+-- GLOBAL STOP
+--==================================================
+
+_G.StopFarming = function()
+
+    stopFarming(
+        "Stopped manually"
+    )
+
+end
+
+--==================================================
+-- STATUS
+--==================================================
+
+_G.GetStatus = function()
+
+    return {
+        farming =
+            State.farming,
+
+        processing =
+            State.processing,
+
+        tweening =
+            State.tweening,
+
+        restarting =
+            State.restarting,
+
+        lastTask =
+            State.lastTask,
+
+        taskCount =
+            State.taskCount,
+
+        restartCount =
+            State.restartCount,
+
+        stopReason =
+            State.stopReason,
+    }
+end
+
+--==================================================
+-- DEBUG
+--==================================================
+
+_G.PhotoFarmStatus = function()
+
+    print(
+        "========== PHOTO FARM =========="
+    )
+
+    print(
+        "Farming      :",
+        State.farming
+    )
+
+    print(
+        "Processing   :",
+        State.processing
+    )
+
+    print(
+        "Restarting   :",
+        State.restarting
+    )
+
+    print(
+        "Task         :",
+        State.lastTask
+    )
+
+    print(
+        "Count        :",
+        State.taskCount
+    )
+
+    print(
+        "Restarts     :",
+        State.restartCount
+    )
+
+    print(
+        "Reason       :",
+        State.stopReason
+    )
+
+    print(
+        "================================"
+    )
+end
