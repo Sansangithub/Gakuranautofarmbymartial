@@ -4446,4 +4446,4 @@ _G.PhotoFarmStatus = function()
     print(
         "================================"
     )
-endqqa
+end
