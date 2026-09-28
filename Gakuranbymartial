@@ -14,6 +14,14 @@
 --// FAST PHOTO MODE
 --// NO PLAYER DISTANCE GUI
 --// NO PHOTO RANGE CHECK
+--//
+--// AUTO VIEW FIX:
+--// SAME PLAYER = DO NOT SEND ;VIEW AGAIN
+--// DIFFERENT PLAYER = SEND ;VIEW ONCE
+--// MOBILE CHAT = TARGET CHANNEL -> RBXGENERAL -> OTHER TEXTCHANNEL -> LEGACY
+--// NOTE:
+--// SendAsync sends the chat message programmatically.
+--// It does not simulate physically typing into the mobile keyboard.
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -51,21 +59,23 @@ local Settings = {
 
         PlayerViewEnabled = true,
 
-        -- Duration camera melihat target
         PlayerViewDuration = 1.5,
 
         --==================================================
         -- AUTO VIEW COMMAND
         --==================================================
 
-        -- Jika true:
-        -- Get a photo of John
-        --       ↓
-        -- ;view John
+        -- true = otomatis kirim ;view Player
+        -- false = tidak mengirim command
 
         AutoViewCommandEnabled = false,
 
         AutoViewCommandDelay = 0.05,
+
+        -- Retry chat mobile
+        AutoViewChatRetries = 5,
+
+        AutoViewChatRetryDelay = 0.15,
 
         --==================================================
         -- FLY
@@ -300,7 +310,26 @@ local State = {
     targetPlayer = "",
     targetUsername = "",
 
+    --==================================================
+    -- VIEW MEMORY
+    --==================================================
+
+    -- Target terakhir yang SUDAH berhasil dikirim ;view.
+    --
+    -- Contoh:
+    -- John -> kirim ;view John
+    -- John -> tidak kirim lagi
+    -- John -> tidak kirim lagi
+    -- Mike -> kirim ;view Mike
+    -- Mike -> tidak kirim lagi
+    -- John -> kirim lagi karena target terakhir sudah Mike
+
+    lastViewTarget = "",
+
     lastViewCommand = "",
+
+    viewSendCount = 0,
+    viewSendFailCount = 0,
 }
 
 local currentTween = nil
@@ -329,6 +358,8 @@ local stopFly
 local startPlayerView
 local stopPlayerView
 
+local updateGUI
+
 --==================================================
 -- NORMALIZE PLAYER NAME
 --==================================================
@@ -339,19 +370,16 @@ local function normalizePlayerName(text)
         return ""
     end
 
-    text =
-        tostring(text)
+    text = tostring(text)
 
-    text =
-        text:match(
-            "^%s*(.-)%s*$"
-        )
+    text = text:match(
+        "^%s*(.-)%s*$"
+    )
 
-    text =
-        text:gsub(
-            "[%.,!?:;]+$",
-            ""
-        )
+    text = text:gsub(
+        "[%.,!?:;]+$",
+        ""
+    )
 
     return text
 end
@@ -748,14 +776,14 @@ local function createGUI()
             S.AutoViewCommandEnabled =
                 not S.AutoViewCommandEnabled
 
-            -- Jika dimatikan, jangan mengirim
-            -- command baru.
-
-            if not S.AutoViewCommandEnabled then
-
-                State.lastViewCommand = ""
-
-            end
+            -- IMPORTANT:
+            -- Jangan menghapus lastViewTarget.
+            --
+            -- Jika target masih sama, saat ON lagi
+            -- command tidak akan dikirim ulang.
+            --
+            -- Ini mengikuti aturan:
+            -- SAME PLAYER = NO REPEAT.
 
             updateGUI()
         end
@@ -766,17 +794,13 @@ end
 -- UPDATE GUI
 --==================================================
 
-local function updateGUI()
+updateGUI = function()
 
     if not ToggleButton
         or not StatusLabel then
 
         return
     end
-
-    --==================================================
-    -- FARM STATUS
-    --==================================================
 
     if State.farming then
 
@@ -828,10 +852,6 @@ local function updateGUI()
             )
     end
 
-    --==================================================
-    -- AUTO VIEW STATUS
-    --==================================================
-
     if AutoViewButton then
 
         if S.AutoViewCommandEnabled then
@@ -874,7 +894,205 @@ local function getCamera()
 end
 
 --==================================================
--- AUTO ;VIEW COMMAND
+-- GET TEXT CHAT TARGET CHANNEL
+--==================================================
+
+local function getTextChatTargetChannel()
+
+    if TextChatService.ChatVersion ~=
+        Enum.ChatVersion.TextChatService then
+
+        return nil
+    end
+
+    --==================================================
+    -- METHOD 1
+    -- CHAT INPUT TARGET CHANNEL
+    --==================================================
+
+    local inputConfig =
+        TextChatService:
+        FindFirstChild(
+            "ChatInputBarConfiguration"
+        )
+
+    if inputConfig then
+
+        local success, channel =
+            pcall(
+                function()
+
+                    return inputConfig.TargetTextChannel
+                end
+            )
+
+        if success
+            and channel
+            and channel:IsA("TextChannel") then
+
+            return channel
+        end
+    end
+
+    --==================================================
+    -- METHOD 2
+    -- RBXGENERAL
+    --==================================================
+
+    local textChannels =
+        TextChatService:
+        FindFirstChild(
+            "TextChannels"
+        )
+
+    if not textChannels then
+        return nil
+    end
+
+    local general =
+        textChannels:FindFirstChild(
+            "RBXGeneral"
+        )
+
+    if general
+        and general:IsA("TextChannel") then
+
+        return general
+    end
+
+    --==================================================
+    -- METHOD 3
+    -- FIND ANY TEXTCHANNEL
+    --==================================================
+
+    for _, object in ipairs(
+        textChannels:GetChildren()
+    ) do
+
+        if object:IsA("TextChannel") then
+            return object
+        end
+    end
+
+    return nil
+end
+
+--==================================================
+-- WAIT TEXT CHAT CHANNEL
+--==================================================
+
+local function waitForTextChatChannel()
+
+    if TextChatService.ChatVersion ~=
+        Enum.ChatVersion.TextChatService then
+
+        return nil
+    end
+
+    local timeout =
+        5
+
+    local started =
+        os.clock()
+
+    while os.clock() - started < timeout do
+
+        local channel =
+            getTextChatTargetChannel()
+
+        if channel then
+            return channel
+        end
+
+        task.wait(0.1)
+    end
+
+    return nil
+end
+
+--==================================================
+-- SEND TEXT CHAT
+--==================================================
+
+local function sendTextChatCommand(
+    command
+)
+
+    if TextChatService.ChatVersion ~=
+        Enum.ChatVersion.TextChatService then
+
+        return false
+    end
+
+    local channel =
+        waitForTextChatChannel()
+
+    if not channel then
+        return false
+    end
+
+    local success, result =
+        pcall(
+            function()
+
+                return channel:SendAsync(
+                    command
+                )
+            end
+        )
+
+    if not success then
+        return false
+    end
+
+    return true
+end
+
+--==================================================
+-- LEGACY CHAT
+--==================================================
+
+local function sendLegacyChat(
+    command
+)
+
+    local chatEvents =
+        ReplicatedStorage:
+        FindFirstChild(
+            "DefaultChatSystemChatEvents"
+        )
+
+    if not chatEvents then
+        return false
+    end
+
+    local sayMessage =
+        chatEvents:
+        FindFirstChild(
+            "SayMessageRequest"
+        )
+
+    if not sayMessage then
+        return false
+    end
+
+    local success =
+        pcall(
+            function()
+
+                sayMessage:
+                    FireServer(
+                        command,
+                        "All"
+                    )
+            end
+        )
+
+    return success
+end
+
+--==================================================
+-- SEND VIEW COMMAND
 --==================================================
 
 local function sendViewCommand(
@@ -889,115 +1107,164 @@ local function sendViewCommand(
         return false
     end
 
-    playerName =
+    local normalized =
         normalizePlayerName(
             playerName
         )
 
-    if playerName == "" then
+    if normalized == "" then
         return false
     end
 
-    local command =
-        ";view " .. playerName
-
     --==================================================
-    -- PREVENT SAME COMMAND SPAM
+    -- USE REAL USERNAME IF POSSIBLE
     --==================================================
 
-    if State.lastViewCommand ==
-        command then
+    local player =
+        getPlayerByText(
+            normalized
+        )
+
+    if player then
+
+        normalized =
+            normalizePlayerName(
+                player.Name
+            )
+    end
+
+    --==================================================
+    -- SAME TARGET = DO NOTHING
+    --==================================================
+
+    if State.lastViewTarget ~= ""
+        and State.lastViewTarget:lower()
+            == normalized:lower() then
 
         return true
     end
 
-    State.lastViewCommand =
-        command
+    local command =
+        ";view " .. normalized
 
     --==================================================
-    -- TEXT CHAT SERVICE
+    -- RETRY
+    --==================================================
+
+    local retries =
+        math.max(
+            1,
+            tonumber(
+                S.AutoViewChatRetries
+            ) or 5
+        )
+
+    local retryDelay =
+        math.max(
+            0,
+            tonumber(
+                S.AutoViewChatRetryDelay
+            ) or 0.15
+        )
+
+    --==================================================
+    -- TEXT CHAT
     --==================================================
 
     if TextChatService.ChatVersion ==
         Enum.ChatVersion.TextChatService then
 
-        local textChannels =
-            TextChatService:FindFirstChild(
-                "TextChannels"
-            )
+        for attempt = 1, retries do
 
-        if not textChannels then
-            State.lastViewCommand = ""
-            return false
-        end
-
-        local general =
-            textChannels:FindFirstChild(
-                "RBXGeneral"
-            )
-
-        if not general then
-            State.lastViewCommand = ""
-            return false
-        end
-
-        local success =
-            pcall(
-                function()
-
-                    general:SendAsync(
-                        command
-                    )
-                end
-            )
-
-        if not success then
-            State.lastViewCommand = ""
-        end
-
-        return success
-    end
-
-    --==================================================
-    -- LEGACY CHAT
-    --==================================================
-
-    local chatEvents =
-        ReplicatedStorage:
-        FindFirstChild(
-            "DefaultChatSystemChatEvents"
-        )
-
-    if chatEvents then
-
-        local sayMessage =
-            chatEvents:
-            FindFirstChild(
-                "SayMessageRequest"
-            )
-
-        if sayMessage then
-
-            local success =
-                pcall(
-                    function()
-
-                        sayMessage:
-                        FireServer(
-                            command,
-                            "All"
-                        )
-                    end
-                )
-
-            if not success then
-                State.lastViewCommand = ""
+            if not S.AutoViewCommandEnabled then
+                return false
             end
 
-            return success
+            -- Target mungkin berubah ketika retry.
+            if State.lastViewTarget ~= ""
+                and State.lastViewTarget:lower()
+                    == normalized:lower() then
+
+                return true
+            end
+
+            local success =
+                sendTextChatCommand(
+                    command
+                )
+
+            if success then
+
+                --==================================================
+                -- ONLY MARK AS SENT AFTER SUCCESS
+                --==================================================
+
+                State.lastViewTarget =
+                    normalized
+
+                State.lastViewCommand =
+                    command
+
+                State.viewSendCount += 1
+
+                return true
+            end
+
+            if attempt < retries then
+                task.wait(
+                    retryDelay
+                )
+            end
+        end
+
+    else
+
+        --==================================================
+        -- LEGACY CHAT
+        --==================================================
+
+        for attempt = 1, retries do
+
+            if not S.AutoViewCommandEnabled then
+                return false
+            end
+
+            if State.lastViewTarget ~= ""
+                and State.lastViewTarget:lower()
+                    == normalized:lower() then
+
+                return true
+            end
+
+            local success =
+                sendLegacyChat(
+                    command
+                )
+
+            if success then
+
+                State.lastViewTarget =
+                    normalized
+
+                State.lastViewCommand =
+                    command
+
+                State.viewSendCount += 1
+
+                return true
+            end
+
+            if attempt < retries then
+                task.wait(
+                    retryDelay
+                )
+            end
         end
     end
 
+    State.viewSendFailCount += 1
+
+    -- Jangan set lastViewTarget jika gagal.
     State.lastViewCommand = ""
 
     return false
@@ -1045,10 +1312,6 @@ startPlayerView = function(player)
         return false
     end
 
-    --==================================================
-    -- SAME TARGET
-    --==================================================
-
     if CameraState.active
         and CameraState.targetPlayer == player then
 
@@ -1069,10 +1332,6 @@ startPlayerView = function(player)
 
         return true
     end
-
-    --==================================================
-    -- SAVE CAMERA
-    --==================================================
 
     stopPlayerView()
 
@@ -1095,10 +1354,6 @@ startPlayerView = function(player)
 
     CameraState.targetHRP =
         targetHRP
-
-    --==================================================
-    -- INFINITE YIELD STYLE
-    --==================================================
 
     camera.CameraType =
         Enum.CameraType.Custom
@@ -1183,9 +1438,7 @@ local function waitPlayerView()
             break
         end
 
-        if os.clock()
-            - started >= duration then
-
+        if os.clock() - started >= duration then
             break
         end
 
@@ -1273,7 +1526,6 @@ local function bindCharacter(character)
     ) do
 
         if object:IsA("BasePart") then
-
             object.CanCollide = true
         end
     end
@@ -1334,7 +1586,6 @@ local function setCollision(enabled)
     ) do
 
         if object:IsA("BasePart") then
-
             object.CanCollide = enabled
         end
     end
@@ -2438,7 +2689,11 @@ local function restartJobPlayerNotFound()
 
     State.targetPlayer = ""
     State.targetUsername = ""
-    State.lastViewCommand = ""
+
+    -- IMPORTANT:
+    -- Jangan reset lastViewTarget.
+    -- Jika target yang sama muncul lagi,
+    -- ;view tidak akan dikirim ulang.
 
     stopPlayerView()
     cancelTween()
@@ -2508,7 +2763,8 @@ local function restartUntilValidTask()
 
     State.targetPlayer = ""
     State.targetUsername = ""
-    State.lastViewCommand = ""
+
+    -- Keep lastViewTarget.
 
     stopPlayerView()
     cancelTween()
@@ -2840,7 +3096,6 @@ local function smoothTween(
     local connection =
         currentTween.Completed:Connect(
             function()
-
                 completed = true
             end
         )
@@ -3041,13 +3296,12 @@ local function processPlayerTask(
 
     if S.AutoViewCommandEnabled then
 
-        local viewName =
-            target.username
-            or target.displayName
-            or realPlayer.Name
+        -- Selalu gunakan username asli.
+        -- Ini menghindari masalah display name
+        -- pada command ;view.
 
         sendViewCommand(
-            viewName
+            realPlayer.Name
         )
 
         task.wait(
@@ -3083,28 +3337,28 @@ local function processPlayerTask(
 
             if newTarget then
 
+                local oldPlayer =
+                    realPlayer
+
                 realPlayer =
                     newTarget.player
 
                 State.targetUsername =
                     realPlayer.Name
 
-                -- Re-send view command
-                -- apabila target berubah.
+                -- HANYA akan mengirim jika berbeda.
+                if oldPlayer ~= realPlayer then
 
-                if S.AutoViewCommandEnabled then
+                    if S.AutoViewCommandEnabled then
 
-                    State.lastViewCommand = ""
+                        sendViewCommand(
+                            realPlayer.Name
+                        )
 
-                    sendViewCommand(
-                        newTarget.username
-                        or newTarget.displayName
-                        or realPlayer.Name
-                    )
-
-                    task.wait(
-                        S.AutoViewCommandDelay
-                    )
+                        task.wait(
+                            S.AutoViewCommandDelay
+                        )
+                    end
                 end
 
                 continue
@@ -3146,32 +3400,28 @@ local function processPlayerTask(
         end
 
         --==================================================
-        -- AUTO VIEW COMMAND
+        -- AUTO VIEW
         --==================================================
 
         if S.AutoViewCommandEnabled then
 
-            local viewName =
+            -- sendViewCommand sendiri melakukan
+            -- duplicate protection.
+            --
+            -- Jadi tidak perlu:
+            -- State.lastViewCommand = ""
+
+            sendViewCommand(
                 realPlayer.Name
+            )
 
-            local command =
-                ";view " .. viewName
-
-            if State.lastViewCommand
-                ~= command then
-
-                sendViewCommand(
-                    viewName
-                )
-
-                task.wait(
-                    S.AutoViewCommandDelay
-                )
-            end
+            task.wait(
+                S.AutoViewCommandDelay
+            )
         end
 
         --==================================================
-        -- VIEW LIKE INFINITE YIELD
+        -- VIEW
         --==================================================
 
         if S.PlayerViewEnabled then
@@ -3182,7 +3432,6 @@ local function processPlayerTask(
                 )
 
             if viewStarted then
-
                 waitPlayerView()
             end
         end
@@ -3250,10 +3499,6 @@ local function processPlayerTask(
 
         if success then
 
-            --==================================================
-            -- SUCCESS
-            --==================================================
-
             setCollision(true)
 
             State.tweening = false
@@ -3264,13 +3509,22 @@ local function processPlayerTask(
             State.targetPlayer = ""
             State.targetUsername = ""
 
-            -- Unview setelah foto berhasil.
-
+            -- Unview.
             stopPlayerView()
 
-            -- Allow command baru pada task berikutnya.
-
-            State.lastViewCommand = ""
+            --==================================================
+            -- IMPORTANT
+            --==================================================
+            --
+            -- JANGAN RESET:
+            -- State.lastViewTarget
+            --
+            -- Karena kalau target task berikutnya
+            -- masih orang yang sama, ;view tidak perlu
+            -- dikirim ulang.
+            --
+            -- Hanya lastViewCommand yang boleh
+            -- tetap sebagai informasi command terakhir.
 
             task.wait(
                 S.SuccessDelay
@@ -3368,8 +3622,6 @@ local function processAreaTask(
     )
 
     State.lastTask = ""
-
-    State.lastViewCommand = ""
 
     return true
 end
@@ -3509,7 +3761,6 @@ local function farmLoop()
 
         pcall(
             function()
-
                 processTask()
             end
         )
@@ -3560,7 +3811,17 @@ startFarming = function()
 
     State.targetPlayer = ""
     State.targetUsername = ""
-    State.lastViewCommand = ""
+
+    --==================================================
+    -- IMPORTANT
+    --==================================================
+    --
+    -- JANGAN reset:
+    -- State.lastViewTarget
+    --
+    -- Jadi jika farming OFF -> ON lagi
+    -- dan targetnya masih sama, ;view tidak
+    -- dikirim ulang.
 
     setCollision(true)
 
@@ -3636,7 +3897,6 @@ stopFarmingFromGUI = function()
 
     State.targetPlayer = ""
     State.targetUsername = ""
-    State.lastViewCommand = ""
 
     State.stopReason =
         "Disabled from GUI"
@@ -3794,7 +4054,6 @@ end
 _G.StartFly = function()
 
     if State.farming then
-
         startFly()
     end
 end
@@ -3929,10 +4188,8 @@ _G.SetAutoView = function(
     S.AutoViewCommandEnabled =
         enabled == true
 
-    if not S.AutoViewCommandEnabled then
-
-        State.lastViewCommand = ""
-    end
+    -- IMPORTANT:
+    -- Jangan reset lastViewTarget.
 
     updateGUI()
 end
@@ -3957,6 +4214,30 @@ _G.SendViewCommand = function(
     return sendViewCommand(
         playerName
     )
+end
+
+--==================================================
+-- MANUAL CLEAR VIEW MEMORY
+--==================================================
+
+-- Gunakan ini jika ingin memaksa ;view dikirim
+-- lagi untuk target yang sama.
+
+_G.ClearViewMemory = function()
+
+    State.lastViewTarget = ""
+    State.lastViewCommand = ""
+
+    return true
+end
+
+--==================================================
+-- GET LAST VIEW TARGET
+--==================================================
+
+_G.GetLastViewTarget = function()
+
+    return State.lastViewTarget
 end
 
 --==================================================
@@ -4029,8 +4310,17 @@ _G.GetStatus = function()
         autoView =
             S.AutoViewCommandEnabled,
 
+        lastViewTarget =
+            State.lastViewTarget,
+
         lastViewCommand =
             State.lastViewCommand,
+
+        viewSendCount =
+            State.viewSendCount,
+
+        viewSendFailCount =
+            State.viewSendFailCount,
 
         lastTask =
             State.lastTask,
@@ -4104,8 +4394,23 @@ _G.PhotoFarmStatus = function()
     )
 
     print(
+        "Last View Target :",
+        State.lastViewTarget
+    )
+
+    print(
         "Last View Cmd    :",
         State.lastViewCommand
+    )
+
+    print(
+        "View Send Count  :",
+        State.viewSendCount
+    )
+
+    print(
+        "View Fail Count  :",
+        State.viewSendFailCount
     )
 
     print(
@@ -4141,4 +4446,4 @@ _G.PhotoFarmStatus = function()
     print(
         "================================"
     )
-end
+endqqa
