@@ -1,8 +1,8 @@
 --// Made by @DirectMemoryAccess
 --// Photo Job Farming
 --// WHITELIST AREA ONLY
---// PLAYER PHOTO = FIND PLAYER -> VIEW PLAYER -> TELEPORT -> PHOTO
---// VIEW PLAYER LIKE INFINITE YIELD VIEW
+--// PLAYER PHOTO = FIND PLAYER -> AUTO ;VIEW -> VIEW PLAYER -> TELEPORT -> PHOTO
+--// AUTO VIEW COMMAND = ON / OFF
 --// VIEW DURATION = CONFIGURABLE
 --// VIEW UNTIL PHOTO SUCCESS -> UNVIEW
 --// AREA PHOTO = WHITELIST AREA -> PHOTO
@@ -21,6 +21,7 @@ local Workspace         = game:GetService("Workspace")
 local TweenService      = game:GetService("TweenService")
 local UserInputService  = game:GetService("UserInputService")
 local RunService        = game:GetService("RunService")
+local TextChatService   = game:GetService("TextChatService")
 
 --==================================================
 -- SETTINGS
@@ -35,7 +36,10 @@ local Settings = {
 
         RefreshRate = 0.03,
 
+        --==================================================
         -- MOVEMENT
+        --==================================================
+
         TweenSpeed  = 180,
         MaxDistance = 1.0,
         MaxDuration = 0.35,
@@ -47,9 +51,21 @@ local Settings = {
 
         PlayerViewEnabled = true,
 
-        -- Infinite Yield style:
-        -- CameraSubject = Target Humanoid
+        -- Duration camera melihat target
         PlayerViewDuration = 1.5,
+
+        --==================================================
+        -- AUTO VIEW COMMAND
+        --==================================================
+
+        -- Jika true:
+        -- Get a photo of John
+        --       ↓
+        -- ;view John
+
+        AutoViewCommandEnabled = false,
+
+        AutoViewCommandDelay = 0.05,
 
         --==================================================
         -- FLY
@@ -283,6 +299,8 @@ local State = {
 
     targetPlayer = "",
     targetUsername = "",
+
+    lastViewCommand = "",
 }
 
 local currentTween = nil
@@ -295,6 +313,7 @@ local farmLoopRunning = false
 local ScreenGui
 local MainFrame
 local ToggleButton
+local AutoViewButton
 local StatusLabel
 
 --==================================================
@@ -309,6 +328,33 @@ local stopFly
 
 local startPlayerView
 local stopPlayerView
+
+--==================================================
+-- NORMALIZE PLAYER NAME
+--==================================================
+
+local function normalizePlayerName(text)
+
+    if not text then
+        return ""
+    end
+
+    text =
+        tostring(text)
+
+    text =
+        text:match(
+            "^%s*(.-)%s*$"
+        )
+
+    text =
+        text:gsub(
+            "[%.,!?:;]+$",
+            ""
+        )
+
+    return text
+end
 
 --==================================================
 -- GUI
@@ -349,7 +395,7 @@ local function createGUI()
             0,
             230,
             0,
-            90
+            120
         )
 
     MainFrame.Position =
@@ -473,7 +519,7 @@ local function createGUI()
     StatusLabel.Parent = MainFrame
 
     --==================================================
-    -- TOGGLE
+    -- FARM TOGGLE
     --==================================================
 
     ToggleButton =
@@ -486,7 +532,7 @@ local function createGUI()
             0,
             90,
             0,
-            32
+            28
         )
 
     ToggleButton.Position =
@@ -515,7 +561,7 @@ local function createGUI()
             255
         )
 
-    ToggleButton.TextSize = 14
+    ToggleButton.TextSize = 13
 
     ToggleButton.Font =
         Enum.Font.GothamBold
@@ -533,6 +579,71 @@ local function createGUI()
 
     buttonCorner.Parent =
         ToggleButton
+
+    --==================================================
+    -- AUTO VIEW TOGGLE
+    --==================================================
+
+    AutoViewButton =
+        Instance.new("TextButton")
+
+    AutoViewButton.Name =
+        "AutoView"
+
+    AutoViewButton.Size =
+        UDim2.new(
+            0,
+            90,
+            0,
+            28
+        )
+
+    AutoViewButton.Position =
+        UDim2.new(
+            1,
+            -100,
+            0,
+            64
+        )
+
+    AutoViewButton.BackgroundColor3 =
+        Color3.fromRGB(
+            170,
+            45,
+            45
+        )
+
+    AutoViewButton.BorderSizePixel = 0
+
+    AutoViewButton.Text =
+        "VIEW OFF"
+
+    AutoViewButton.TextColor3 =
+        Color3.fromRGB(
+            255,
+            255,
+            255
+        )
+
+    AutoViewButton.TextSize = 12
+
+    AutoViewButton.Font =
+        Enum.Font.GothamBold
+
+    AutoViewButton.Parent =
+        MainFrame
+
+    local autoViewCorner =
+        Instance.new("UICorner")
+
+    autoViewCorner.CornerRadius =
+        UDim.new(
+            0,
+            7
+        )
+
+    autoViewCorner.Parent =
+        AutoViewButton
 
     --==================================================
     -- DRAG
@@ -610,7 +721,7 @@ local function createGUI()
     )
 
     --==================================================
-    -- EVENTS
+    -- FARM BUTTON
     --==================================================
 
     ToggleButton.MouseButton1Click:Connect(
@@ -626,6 +737,29 @@ local function createGUI()
             end
         end
     )
+
+    --==================================================
+    -- AUTO VIEW BUTTON
+    --==================================================
+
+    AutoViewButton.MouseButton1Click:Connect(
+        function()
+
+            S.AutoViewCommandEnabled =
+                not S.AutoViewCommandEnabled
+
+            -- Jika dimatikan, jangan mengirim
+            -- command baru.
+
+            if not S.AutoViewCommandEnabled then
+
+                State.lastViewCommand = ""
+
+            end
+
+            updateGUI()
+        end
+    )
 end
 
 --==================================================
@@ -639,6 +773,10 @@ local function updateGUI()
 
         return
     end
+
+    --==================================================
+    -- FARM STATUS
+    --==================================================
 
     if State.farming then
 
@@ -689,11 +827,42 @@ local function updateGUI()
                 80
             )
     end
+
+    --==================================================
+    -- AUTO VIEW STATUS
+    --==================================================
+
+    if AutoViewButton then
+
+        if S.AutoViewCommandEnabled then
+
+            AutoViewButton.Text =
+                "VIEW ON"
+
+            AutoViewButton.BackgroundColor3 =
+                Color3.fromRGB(
+                    45,
+                    170,
+                    80
+                )
+
+        else
+
+            AutoViewButton.Text =
+                "VIEW OFF"
+
+            AutoViewButton.BackgroundColor3 =
+                Color3.fromRGB(
+                    170,
+                    45,
+                    45
+                )
+        end
+    end
 end
 
 --==================================================
 -- CAMERA
--- INFINITE YIELD STYLE VIEW
 --==================================================
 
 local function getCamera()
@@ -705,7 +874,137 @@ local function getCamera()
 end
 
 --==================================================
--- START PLAYER VIEW
+-- AUTO ;VIEW COMMAND
+--==================================================
+
+local function sendViewCommand(
+    playerName
+)
+
+    if not S.AutoViewCommandEnabled then
+        return false
+    end
+
+    if not playerName then
+        return false
+    end
+
+    playerName =
+        normalizePlayerName(
+            playerName
+        )
+
+    if playerName == "" then
+        return false
+    end
+
+    local command =
+        ";view " .. playerName
+
+    --==================================================
+    -- PREVENT SAME COMMAND SPAM
+    --==================================================
+
+    if State.lastViewCommand ==
+        command then
+
+        return true
+    end
+
+    State.lastViewCommand =
+        command
+
+    --==================================================
+    -- TEXT CHAT SERVICE
+    --==================================================
+
+    if TextChatService.ChatVersion ==
+        Enum.ChatVersion.TextChatService then
+
+        local textChannels =
+            TextChatService:FindFirstChild(
+                "TextChannels"
+            )
+
+        if not textChannels then
+            State.lastViewCommand = ""
+            return false
+        end
+
+        local general =
+            textChannels:FindFirstChild(
+                "RBXGeneral"
+            )
+
+        if not general then
+            State.lastViewCommand = ""
+            return false
+        end
+
+        local success =
+            pcall(
+                function()
+
+                    general:SendAsync(
+                        command
+                    )
+                end
+            )
+
+        if not success then
+            State.lastViewCommand = ""
+        end
+
+        return success
+    end
+
+    --==================================================
+    -- LEGACY CHAT
+    --==================================================
+
+    local chatEvents =
+        ReplicatedStorage:
+        FindFirstChild(
+            "DefaultChatSystemChatEvents"
+        )
+
+    if chatEvents then
+
+        local sayMessage =
+            chatEvents:
+            FindFirstChild(
+                "SayMessageRequest"
+            )
+
+        if sayMessage then
+
+            local success =
+                pcall(
+                    function()
+
+                        sayMessage:
+                        FireServer(
+                            command,
+                            "All"
+                        )
+                    end
+                )
+
+            if not success then
+                State.lastViewCommand = ""
+            end
+
+            return success
+        end
+    end
+
+    State.lastViewCommand = ""
+
+    return false
+end
+
+--==================================================
+-- PLAYER VIEW
 --==================================================
 
 startPlayerView = function(player)
@@ -772,7 +1071,7 @@ startPlayerView = function(player)
     end
 
     --==================================================
-    -- SAVE CURRENT CAMERA
+    -- SAVE CAMERA
     --==================================================
 
     stopPlayerView()
@@ -800,18 +1099,6 @@ startPlayerView = function(player)
     --==================================================
     -- INFINITE YIELD STYLE
     --==================================================
-    --
-    -- CameraSubject diarahkan langsung ke
-    -- Humanoid target.
-    --
-    -- Tidak memakai Scriptable camera.
-    -- Tidak membuat kamera manual.
-    --
-    -- Hasilnya seperti command:
-    --
-    -- view PlayerName
-    --
-    --==================================================
 
     camera.CameraType =
         Enum.CameraType.Custom
@@ -832,10 +1119,6 @@ stopPlayerView = function()
         getCamera()
 
     if camera then
-
-        --==================================================
-        -- RESTORE LOCAL CHARACTER
-        --==================================================
 
         camera.CameraType =
             CameraState.previousCameraType
@@ -905,9 +1188,6 @@ local function waitPlayerView()
 
             break
         end
-
-        -- Pastikan kamera tetap mengikuti
-        -- target seperti Infinite Yield.
 
         local player =
             CameraState.targetPlayer
@@ -1327,33 +1607,6 @@ local function normalizeText(text)
 end
 
 --==================================================
--- NORMALIZE PLAYER NAME
---==================================================
-
-local function normalizePlayerName(text)
-
-    if not text then
-        return ""
-    end
-
-    text =
-        tostring(text)
-
-    text =
-        text:match(
-            "^%s*(.-)%s*$"
-        )
-
-    text =
-        text:gsub(
-            "[%.,!?:;]+$",
-            ""
-        )
-
-    return text
-end
-
---==================================================
 -- GET TASK TEXT
 --==================================================
 
@@ -1684,6 +1937,10 @@ local function findPlayerByInfo(
         return nil, nil, nil
     end
 
+    --==================================================
+    -- CHARACTER INFO
+    --==================================================
+
     for _, player in ipairs(
         Players:GetPlayers()
     ) do
@@ -1725,6 +1982,10 @@ local function findPlayerByInfo(
             end
         end
     end
+
+    --==================================================
+    -- WORKSPACE INFO
+    --==================================================
 
     for _, object in ipairs(
         Workspace:GetDescendants()
@@ -1777,6 +2038,10 @@ local function findPlayerByInfo(
             end
         end
     end
+
+    --==================================================
+    -- DIRECT PLAYER SEARCH
+    --==================================================
 
     local directPlayer =
         getPlayerByText(
@@ -2173,6 +2438,7 @@ local function restartJobPlayerNotFound()
 
     State.targetPlayer = ""
     State.targetUsername = ""
+    State.lastViewCommand = ""
 
     stopPlayerView()
     cancelTween()
@@ -2242,6 +2508,7 @@ local function restartUntilValidTask()
 
     State.targetPlayer = ""
     State.targetUsername = ""
+    State.lastViewCommand = ""
 
     stopPlayerView()
     cancelTween()
@@ -2724,7 +2991,6 @@ local function getPlayerTeleportCFrame(
     local teleportPosition =
         targetPosition
         - targetLook * 2
-
         + Vector3.new(
             0,
             0.2,
@@ -2770,7 +3036,27 @@ local function processPlayerTask(
         realPlayer.Name
 
     --==================================================
-    -- PLAYER VIEW LOOP
+    -- AUTO ;VIEW
+    --==================================================
+
+    if S.AutoViewCommandEnabled then
+
+        local viewName =
+            target.username
+            or target.displayName
+            or realPlayer.Name
+
+        sendViewCommand(
+            viewName
+        )
+
+        task.wait(
+            S.AutoViewCommandDelay
+        )
+    end
+
+    --==================================================
+    -- PLAYER VIEW / PHOTO LOOP
     --==================================================
 
     while State.farming do
@@ -2802,6 +3088,24 @@ local function processPlayerTask(
 
                 State.targetUsername =
                     realPlayer.Name
+
+                -- Re-send view command
+                -- apabila target berubah.
+
+                if S.AutoViewCommandEnabled then
+
+                    State.lastViewCommand = ""
+
+                    sendViewCommand(
+                        newTarget.username
+                        or newTarget.displayName
+                        or realPlayer.Name
+                    )
+
+                    task.wait(
+                        S.AutoViewCommandDelay
+                    )
+                end
 
                 continue
 
@@ -2842,6 +3146,31 @@ local function processPlayerTask(
         end
 
         --==================================================
+        -- AUTO VIEW COMMAND
+        --==================================================
+
+        if S.AutoViewCommandEnabled then
+
+            local viewName =
+                realPlayer.Name
+
+            local command =
+                ";view " .. viewName
+
+            if State.lastViewCommand
+                ~= command then
+
+                sendViewCommand(
+                    viewName
+                )
+
+                task.wait(
+                    S.AutoViewCommandDelay
+                )
+            end
+        end
+
+        --==================================================
         -- VIEW LIKE INFINITE YIELD
         --==================================================
 
@@ -2853,9 +3182,6 @@ local function processPlayerTask(
                 )
 
             if viewStarted then
-
-                -- View selama 1.5 detik
-                -- atau sesuai setting.
 
                 waitPlayerView()
             end
@@ -2942,6 +3268,10 @@ local function processPlayerTask(
 
             stopPlayerView()
 
+            -- Allow command baru pada task berikutnya.
+
+            State.lastViewCommand = ""
+
             task.wait(
                 S.SuccessDelay
             )
@@ -2951,9 +3281,6 @@ local function processPlayerTask(
 
         --==================================================
         -- PHOTO FAILED
-        --==================================================
-        --
-        -- View akan diulang pada loop berikutnya.
         --==================================================
 
         stopPlayerView()
@@ -3041,6 +3368,8 @@ local function processAreaTask(
     )
 
     State.lastTask = ""
+
+    State.lastViewCommand = ""
 
     return true
 end
@@ -3231,6 +3560,7 @@ startFarming = function()
 
     State.targetPlayer = ""
     State.targetUsername = ""
+    State.lastViewCommand = ""
 
     setCollision(true)
 
@@ -3306,6 +3636,7 @@ stopFarmingFromGUI = function()
 
     State.targetPlayer = ""
     State.targetUsername = ""
+    State.lastViewCommand = ""
 
     State.stopReason =
         "Disabled from GUI"
@@ -3351,9 +3682,6 @@ Workspace:GetPropertyChangedSignal(
 
         Camera =
             Workspace.CurrentCamera
-
-        -- Jika sedang view, pasang lagi
-        -- CameraSubject ke target.
 
         if CameraState.active
             and CameraState.targetPlayer then
@@ -3591,6 +3919,47 @@ _G.GetPlayerView = function()
 end
 
 --==================================================
+-- AUTO VIEW ON/OFF
+--==================================================
+
+_G.SetAutoView = function(
+    enabled
+)
+
+    S.AutoViewCommandEnabled =
+        enabled == true
+
+    if not S.AutoViewCommandEnabled then
+
+        State.lastViewCommand = ""
+    end
+
+    updateGUI()
+end
+
+--==================================================
+-- GET AUTO VIEW
+--==================================================
+
+_G.GetAutoView = function()
+
+    return S.AutoViewCommandEnabled
+end
+
+--==================================================
+-- MANUAL SEND ;VIEW
+--==================================================
+
+_G.SendViewCommand = function(
+    playerName
+)
+
+    return sendViewCommand(
+        playerName
+    )
+end
+
+--==================================================
 -- MANUAL VIEW PLAYER
 --==================================================
 
@@ -3657,6 +4026,12 @@ _G.GetStatus = function()
         playerViewDuration =
             S.PlayerViewDuration,
 
+        autoView =
+            S.AutoViewCommandEnabled,
+
+        lastViewCommand =
+            State.lastViewCommand,
+
         lastTask =
             State.lastTask,
 
@@ -3721,6 +4096,16 @@ _G.PhotoFarmStatus = function()
         "View Duration    :",
         S.PlayerViewDuration,
         "seconds"
+    )
+
+    print(
+        "Auto View        :",
+        S.AutoViewCommandEnabled
+    )
+
+    print(
+        "Last View Cmd    :",
+        State.lastViewCommand
     )
 
     print(
