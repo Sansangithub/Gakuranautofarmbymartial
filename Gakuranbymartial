@@ -1,46 +1,69 @@
+
 --// Made by @DirectMemoryAccess
 --// Photo Job Farming
 --// WHITELIST AREA ONLY
---// PLAYER PHOTO = FIND INFO -> REAL PLAYER -> PHOTO
+--// PLAYER PHOTO = FIND INFO -> TELEPORT ONCE -> PHOTO
 --// AREA PHOTO = WHITELIST AREA -> PHOTO
 --// MUSIC ROOM = AUTO REROLL
 --// INVALID TASK = STOP -> RESTART -> CHECK AGAIN
 --// GUI = ON / OFF
+--// PLAYER TELEPORT = ONCE, NO FOLLOW LOOP
+--// PLAYER DISTANCE = GUI CONTROL
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace         = game:GetService("Workspace")
 local TweenService      = game:GetService("TweenService")
+local UserInputService  = game:GetService("UserInputService")
 
 --==================================================
 -- SETTINGS
 --==================================================
 
 local Settings = {
-    Farming = {
-        Enabled      = true,
 
-        -- IMPORTANT:
-        -- FALSE = script start dalam keadaan OFF
+    Farming = {
+
+        Enabled      = true,
         AutoStart    = false,
 
         RefreshRate  = 0.08,
 
+        --==================================================
         -- MOVEMENT
+        --==================================================
+
         TweenSpeed   = 180,
         MaxDistance  = 1.0,
         MaxDuration  = 0.35,
         MinDuration  = 0.05,
 
+        --==================================================
+        -- PLAYER TELEPORT
+        --==================================================
+
+        -- Jarak dari player target.
+        -- Bisa diubah langsung melalui GUI.
+        PlayerDistance = 3.0,
+
+        --==================================================
         -- PHOTO
+        --==================================================
+
         PhotoRange   = 10,
         MaxAttempts  = 20,
 
+        --==================================================
         -- PLAYER SEARCH
+        --==================================================
+
         PlayerSearchAttempts = 30,
         PlayerSearchDelay    = 0.05,
 
+        --==================================================
         -- RESTART / REROLL
+        --==================================================
+
         RestartDelay   = 0.01,
         StartDelay     = 0.02,
         AssignmentWait = 0.02,
@@ -199,6 +222,7 @@ local photoJobSubmit
 --==================================================
 
 local State = {
+
     farming      = false,
     processing   = false,
     tweening     = false,
@@ -225,11 +249,71 @@ local MainFrame
 local ToggleButton
 local StatusLabel
 
+local DistanceLabel
+local MinusButton
+local PlusButton
+
+--==================================================
+-- DISTANCE CONTROL
+--==================================================
+
+local MIN_PLAYER_DISTANCE = 0
+local MAX_PLAYER_DISTANCE = 20
+local DISTANCE_STEP = 0.5
+
+local function setPlayerDistance(value)
+
+    value = tonumber(value)
+
+    if not value then
+        return
+    end
+
+    value = math.clamp(
+        value,
+        MIN_PLAYER_DISTANCE,
+        MAX_PLAYER_DISTANCE
+    )
+
+    -- 1 decimal only
+    value = math.floor(
+        value * 10 + 0.5
+    ) / 10
+
+    S.PlayerDistance = value
+
+    if DistanceLabel then
+
+        DistanceLabel.Text =
+            "Distance: "
+            .. string.format(
+                "%.1f",
+                S.PlayerDistance
+            )
+
+    end
+end
+
+local function changePlayerDistance(amount)
+
+    setPlayerDistance(
+        S.PlayerDistance + amount
+    )
+end
+
+--==================================================
+-- GUI
+--==================================================
+
 local function createGUI()
 
-    -- Remove old GUI if exists
+    local PlayerGui =
+        LocalPlayer:WaitForChild(
+            "PlayerGui"
+        )
+
     local oldGui =
-        LocalPlayer.PlayerGui:FindFirstChild(
+        PlayerGui:FindFirstChild(
             "PhotoFarmGUI"
         )
 
@@ -244,11 +328,12 @@ local function createGUI()
         "PhotoFarmGUI"
 
     ScreenGui.ResetOnSpawn = false
+
     ScreenGui.ZIndexBehavior =
         Enum.ZIndexBehavior.Sibling
 
     ScreenGui.Parent =
-        LocalPlayer.PlayerGui
+        PlayerGui
 
     --==================================================
     -- MAIN FRAME
@@ -261,12 +346,17 @@ local function createGUI()
         "MainFrame"
 
     MainFrame.Size =
-        UDim2.new(0, 190, 0, 85)
+        UDim2.new(
+            0,
+            210,
+            0,
+            130
+        )
 
     MainFrame.Position =
         UDim2.new(
             0.5,
-            -95,
+            -105,
             0,
             100
         )
@@ -287,7 +377,10 @@ local function createGUI()
         Instance.new("UICorner")
 
     corner.CornerRadius =
-        UDim.new(0, 10)
+        UDim.new(
+            0,
+            10
+        )
 
     corner.Parent =
         MainFrame
@@ -331,6 +424,7 @@ local function createGUI()
         )
 
     Title.TextSize = 16
+
     Title.Font =
         Enum.Font.GothamBold
 
@@ -353,7 +447,7 @@ local function createGUI()
     StatusLabel.Size =
         UDim2.new(
             0,
-            70,
+            80,
             0,
             25
         )
@@ -363,7 +457,7 @@ local function createGUI()
             0,
             10,
             0,
-            34
+            35
         )
 
     StatusLabel.BackgroundTransparency = 1
@@ -390,7 +484,7 @@ local function createGUI()
         MainFrame
 
     --==================================================
-    -- BUTTON
+    -- TOGGLE
     --==================================================
 
     ToggleButton =
@@ -412,7 +506,7 @@ local function createGUI()
             1,
             -100,
             0,
-            38
+            32
         )
 
     ToggleButton.BackgroundColor3 =
@@ -446,10 +540,196 @@ local function createGUI()
         Instance.new("UICorner")
 
     buttonCorner.CornerRadius =
-        UDim.new(0, 7)
+        UDim.new(
+            0,
+            7
+        )
 
     buttonCorner.Parent =
         ToggleButton
+
+    --==================================================
+    -- DISTANCE LABEL
+    --==================================================
+
+    DistanceLabel =
+        Instance.new("TextLabel")
+
+    DistanceLabel.Name =
+        "Distance"
+
+    DistanceLabel.Size =
+        UDim2.new(
+            0,
+            110,
+            0,
+            28
+        )
+
+    DistanceLabel.Position =
+        UDim2.new(
+            0,
+            10,
+            0,
+            75
+        )
+
+    DistanceLabel.BackgroundTransparency = 1
+
+    DistanceLabel.Text =
+        "Distance: "
+        .. string.format(
+            "%.1f",
+            S.PlayerDistance
+        )
+
+    DistanceLabel.TextColor3 =
+        Color3.fromRGB(
+            220,
+            220,
+            220
+        )
+
+    DistanceLabel.TextSize = 13
+
+    DistanceLabel.Font =
+        Enum.Font.Gotham
+
+    DistanceLabel.TextXAlignment =
+        Enum.TextXAlignment.Left
+
+    DistanceLabel.Parent =
+        MainFrame
+
+    --==================================================
+    -- MINUS
+    --==================================================
+
+    MinusButton =
+        Instance.new("TextButton")
+
+    MinusButton.Name =
+        "Minus"
+
+    MinusButton.Size =
+        UDim2.new(
+            0,
+            32,
+            0,
+            28
+        )
+
+    MinusButton.Position =
+        UDim2.new(
+            1,
+            -75,
+            0,
+            75
+        )
+
+    MinusButton.BackgroundColor3 =
+        Color3.fromRGB(
+            55,
+            55,
+            55
+        )
+
+    MinusButton.BorderSizePixel = 0
+
+    MinusButton.Text =
+        "-"
+
+    MinusButton.TextColor3 =
+        Color3.fromRGB(
+            255,
+            255,
+            255
+        )
+
+    MinusButton.TextSize = 18
+
+    MinusButton.Font =
+        Enum.Font.GothamBold
+
+    MinusButton.Parent =
+        MainFrame
+
+    local minusCorner =
+        Instance.new("UICorner")
+
+    minusCorner.CornerRadius =
+        UDim.new(
+            0,
+            6
+        )
+
+    minusCorner.Parent =
+        MinusButton
+
+    --==================================================
+    -- PLUS
+    --==================================================
+
+    PlusButton =
+        Instance.new("TextButton")
+
+    PlusButton.Name =
+        "Plus"
+
+    PlusButton.Size =
+        UDim2.new(
+            0,
+            32,
+            0,
+            28
+        )
+
+    PlusButton.Position =
+        UDim2.new(
+            1,
+            -38,
+            0,
+            75
+        )
+
+    PlusButton.BackgroundColor3 =
+        Color3.fromRGB(
+            55,
+            55,
+            55
+        )
+
+    PlusButton.BorderSizePixel = 0
+
+    PlusButton.Text =
+        "+"
+
+    PlusButton.TextColor3 =
+        Color3.fromRGB(
+            255,
+            255,
+            255
+        )
+
+    PlusButton.TextSize = 18
+
+    PlusButton.Font =
+        Enum.Font.GothamBold
+
+    PlusButton.Parent =
+        MainFrame
+
+    local plusCorner =
+        Instance.new("UICorner")
+
+    plusCorner.CornerRadius =
+        UDim.new(
+            0,
+            6
+        )
+
+    plusCorner.Parent =
+        PlusButton
 
     --==================================================
     -- DRAG
@@ -482,30 +762,15 @@ local function createGUI()
                             Enum.UserInputState.End then
 
                             dragging = false
-                        end
 
+                        end
                     end
                 )
             end
         end
     )
 
-    MainFrame.InputChanged:Connect(
-        function(input)
-
-            if input.UserInputType ==
-                Enum.UserInputType.MouseMovement
-                or input.UserInputType ==
-                Enum.UserInputType.Touch then
-
-                -- handled below
-            end
-
-        end
-    )
-
-    game:GetService("UserInputService")
-        .InputChanged:Connect(
+    UserInputService.InputChanged:Connect(
         function(input)
 
             if not dragging then
@@ -536,6 +801,46 @@ local function createGUI()
                 )
         end
     )
+
+    --==================================================
+    -- BUTTON EVENTS
+    --==================================================
+
+    ToggleButton.MouseButton1Click:Connect(
+        function()
+
+            if State.farming then
+
+                stopFarmingFromGUI()
+
+            else
+
+                startFarming()
+
+            end
+
+        end
+    )
+
+    MinusButton.MouseButton1Click:Connect(
+        function()
+
+            changePlayerDistance(
+                -DISTANCE_STEP
+            )
+
+        end
+    )
+
+    PlusButton.MouseButton1Click:Connect(
+        function()
+
+            changePlayerDistance(
+                DISTANCE_STEP
+            )
+
+        end
+    )
 end
 
 --==================================================
@@ -548,6 +853,17 @@ local function updateGUI()
         or not StatusLabel then
 
         return
+    end
+
+    if DistanceLabel then
+
+        DistanceLabel.Text =
+            "Distance: "
+            .. string.format(
+                "%.1f",
+                S.PlayerDistance
+            )
+
     end
 
     if State.farming then
@@ -701,6 +1017,7 @@ local function cancelTween()
         end)
 
         currentTween = nil
+
     end
 
     State.tweening = false
@@ -745,6 +1062,7 @@ local function normalizeText(text)
     text = text:lower()
 
     local prefixes = {
+
         "get a photo of ",
         "take a photo of ",
         "take photo of ",
@@ -774,8 +1092,14 @@ local function normalizeText(text)
         end
     end
 
-    if text:sub(1, 4) == "the " then
-        text = text:sub(5)
+    if text:sub(
+        1,
+        4
+    ) == "the " then
+
+        text =
+            text:sub(5)
+
     end
 
     text =
@@ -803,10 +1127,11 @@ local function normalizePlayerName(text)
             "^%s*(.-)%s*$"
         )
 
-    text = text:gsub(
-        "[%.,!?:;]+$",
-        ""
-    )
+    text =
+        text:gsub(
+            "[%.,!?:;]+$",
+            ""
+        )
 
     return text
 end
@@ -863,10 +1188,11 @@ local function getTaskText()
 end
 
 --==================================================
--- PHOTO PREFIX DETECTION
+-- PHOTO PREFIX
 --==================================================
 
 local PHOTO_PREFIXES = {
+
     "get a photo of ",
     "take a photo of ",
     "take photo of ",
@@ -886,10 +1212,15 @@ local function getPhotoTargetText(taskText)
         return nil
     end
 
-    local text = tostring(taskText)
-    local lower = text:lower()
+    local text =
+        tostring(taskText)
 
-    for _, prefix in ipairs(PHOTO_PREFIXES) do
+    local lower =
+        text:lower()
+
+    for _, prefix in ipairs(
+        PHOTO_PREFIXES
+    ) do
 
         if lower:sub(
             1,
@@ -909,6 +1240,7 @@ local function getPhotoTargetText(taskText)
             if target ~= "" then
                 return target
             end
+
         end
     end
 
@@ -916,7 +1248,7 @@ local function getPhotoTargetText(taskText)
 end
 
 --==================================================
--- FIND MODEL FROM INFO LABEL
+-- FIND MODEL FROM INFO
 --==================================================
 
 local function findModelFromInfo(info)
@@ -936,13 +1268,14 @@ local function findModelFromInfo(info)
 
         current =
             current.Parent
+
     end
 
     return nil
 end
 
 --==================================================
--- MATCH INFO TEXT
+-- MATCH INFO
 --==================================================
 
 local function infoMatchesTarget(
@@ -958,10 +1291,14 @@ local function infoMatchesTarget(
     end
 
     local info =
-        tostring(infoText):lower()
+        tostring(
+            infoText
+        ):lower()
 
     local target =
-        tostring(targetText):lower()
+        tostring(
+            targetText
+        ):lower()
 
     if info == target then
         return true
@@ -1007,7 +1344,7 @@ local function infoMatchesTarget(
 end
 
 --==================================================
--- FIND REAL PLAYER FROM MODEL
+-- REAL PLAYER FROM MODEL
 --==================================================
 
 local function getRealPlayerFromModel(model)
@@ -1026,7 +1363,9 @@ local function getRealPlayerFromModel(model)
     end
 
     local modelName =
-        tostring(model.Name):lower()
+        tostring(
+            model.Name
+        ):lower()
 
     for _, candidate in ipairs(
         Players:GetPlayers()
@@ -1068,7 +1407,7 @@ local function findPlayerByInfo(
 
     --==================================================
     -- PASS 1
-    -- CURRENT PLAYER CHARACTERS
+    -- CURRENT CHARACTER INFO
     --==================================================
 
     for _, player in ipairs(
@@ -1109,6 +1448,7 @@ local function findPlayerByInfo(
                             return player,
                                 character,
                                 playerHRP.Position
+
                         end
                     end
                 end
@@ -1166,6 +1506,7 @@ local function findPlayerByInfo(
                                 return player,
                                     model,
                                     playerHRP.Position
+
                             end
                         end
                     end
@@ -1206,6 +1547,7 @@ local function findPlayerByInfo(
                         return player,
                             character,
                             playerHRP.Position
+
                     end
                 end
             end
@@ -1222,7 +1564,9 @@ end
 local function resolveArea(taskText)
 
     local normalized =
-        normalizeText(taskText)
+        normalizeText(
+            taskText
+        )
 
     if normalized == "" then
         return nil
@@ -1274,7 +1618,7 @@ local function resolveArea(taskText)
 end
 
 --==================================================
--- DETERMINE PLAYER PHOTO TASK
+-- PLAYER PHOTO TASK
 --==================================================
 
 local function isRealPlayerPhotoTask(taskText)
@@ -1289,7 +1633,9 @@ local function isRealPlayerPhotoTask(taskText)
     end
 
     local area =
-        resolveArea(taskText)
+        resolveArea(
+            taskText
+        )
 
     if area then
         return false
@@ -1307,10 +1653,6 @@ local function isRealPlayerPhotoTask(taskText)
     return false
 end
 
---==================================================
--- GET PLAYER TARGET
---==================================================
-
 local function getTargetPlayerText(taskText)
 
     return getPhotoTargetText(
@@ -1319,12 +1661,10 @@ local function getTargetPlayerText(taskText)
 end
 
 --==================================================
--- FIND PLAYER TARGET WITH LOOP
+-- FIND PLAYER TARGET
 --==================================================
 
-local function findPlayerTarget(
-    taskText
-)
+local function findPlayerTarget(taskText)
 
     local requestedName =
         getTargetPlayerText(
@@ -1415,9 +1755,7 @@ end
 -- WHITELIST CHECK
 --==================================================
 
-local function isWhitelistedTask(
-    taskText
-)
+local function isWhitelistedTask(taskText)
 
     if not taskText then
         return false
@@ -1436,13 +1774,10 @@ local function isWhitelistedTask(
 end
 
 --==================================================
--- REJECTED TASK
--- MUSIC ROOM
+-- REJECT MUSIC ROOM
 --==================================================
 
-local function isRejectedTask(
-    taskText
-)
+local function isRejectedTask(taskText)
 
     if not taskText then
         return false
@@ -1453,11 +1788,7 @@ local function isRejectedTask(
             taskText
         )
 
-    if area ~= "Music Room" then
-        return false
-    end
-
-    return true
+    return area == "Music Room"
 end
 
 --==================================================
@@ -1491,9 +1822,6 @@ local function startNewJob()
     if not photoJobSubmit then
         return false
     end
-
-    -- IMPORTANT:
-    -- Jangan start jika toggle OFF.
 
     if not State.farming then
         return false
@@ -1767,6 +2095,7 @@ local function findLocation(taskText)
 
                         bestPart =
                             object
+
                     end
                 end
             end
@@ -1805,6 +2134,7 @@ local function findLocation(taskText)
 
                             bestPart =
                                 object
+
                         end
                     end
                 end
@@ -1820,12 +2150,10 @@ local function findLocation(taskText)
 end
 
 --==================================================
--- FAST MOVE
+-- SMOOTH AREA MOVE
 --==================================================
 
-local function smoothTween(
-    targetPosition
-)
+local function smoothTween(targetPosition)
 
     if not HRP then
         return false
@@ -1891,9 +2219,7 @@ local function smoothTween(
 
     local completed = false
 
-    local connection
-
-    connection =
+    local connection =
         currentTween.Completed:Connect(
             function()
                 completed = true
@@ -1913,6 +2239,7 @@ local function smoothTween(
         end
 
         task.wait()
+
     end
 
     connection:Disconnect()
@@ -1926,23 +2253,30 @@ local function smoothTween(
 end
 
 --==================================================
--- MOVE TO PLAYER
+-- TELEPORT ONCE TO PLAYER
 --==================================================
+-- IMPORTANT:
+-- Tidak ada loop follow.
+-- Tidak ada tween ke player.
+-- Target dicari -> posisi dihitung -> teleport SATU KALI.
+-- Jarak berasal dari S.PlayerDistance / GUI.
 
-local function moveToPlayerTarget(
-    target
-)
+local function teleportToPlayerOnce(target)
+
+    if not State.farming then
+        return false
+    end
 
     if not target then
         return false
     end
 
-    if not target.player then
-        return false
-    end
-
     local player =
         target.player
+
+    if not player then
+        return false
+    end
 
     local character =
         player.Character
@@ -1960,46 +2294,81 @@ local function moveToPlayerTarget(
         return false
     end
 
+    if not HRP then
+        return false
+    end
+
     State.targetUsername =
         player.Name
+
+    --==================================================
+    -- TARGET POSITION
+    --==================================================
 
     local targetPosition =
         targetHRP.Position
 
-    local moved =
-        smoothTween(
+    -- Arah dari target ke posisi kita.
+    local direction =
+        HRP.Position
+        - targetPosition
+
+    -- Jika terlalu dekat / sama posisi,
+    -- gunakan arah belakang target.
+    if direction.Magnitude < 0.1 then
+
+        direction =
+            -targetHRP.CFrame.LookVector
+
+    else
+
+        direction =
+            direction.Unit
+
+    end
+
+    --==================================================
+    -- DISTANCE
+    --==================================================
+
+    local distance =
+        math.max(
+            0,
+            tonumber(
+                S.PlayerDistance
+            ) or 3
+        )
+
+    local teleportPosition =
+        targetPosition
+        + direction * distance
+
+    --==================================================
+    -- FACE TARGET
+    --==================================================
+
+    local newCFrame =
+        CFrame.lookAt(
+            teleportPosition,
             targetPosition
         )
 
-    if not moved then
-        return false
-    end
+    --==================================================
+    -- TELEPORT SEKALI
+    --==================================================
 
-    task.wait(0.05)
+    cancelTween()
 
-    if character.Parent then
+    setCollision(false)
 
-        targetHRP =
-            character:FindFirstChild(
-                "HumanoidRootPart"
-            )
+    HRP.CFrame =
+        newCFrame
 
-        if targetHRP then
+    task.wait()
 
-            local distance =
-                (
-                    HRP.Position
-                    - targetHRP.Position
-                ).Magnitude
+    setCollision(true)
 
-            if distance > S.PhotoRange then
-
-                smoothTween(
-                    targetHRP.Position
-                )
-            end
-        end
-    end
+    State.tweening = false
 
     return true
 end
@@ -2008,9 +2377,7 @@ end
 -- TAKE PHOTO
 --==================================================
 
-local function takePhoto(
-    targetPosition
-)
+local function takePhoto(targetPosition)
 
     if not State.farming then
         return false
@@ -2113,13 +2480,15 @@ end
 -- PROCESS PLAYER TASK
 --==================================================
 
-local function processPlayerTask(
-    taskText
-)
+local function processPlayerTask(taskText)
 
     if not State.farming then
         return false
     end
+
+    --==================================================
+    -- FIND PLAYER
+    --==================================================
 
     local target =
         findPlayerTarget(
@@ -2149,8 +2518,12 @@ local function processPlayerTask(
     State.targetUsername =
         realPlayer.Name
 
+    --==================================================
+    -- TELEPORT ONCE
+    --==================================================
+
     local moved =
-        moveToPlayerTarget(
+        teleportToPlayerOnce(
             target
         )
 
@@ -2165,6 +2538,10 @@ local function processPlayerTask(
         return false
     end
 
+    --==================================================
+    -- GET CURRENT PLAYER POSITION
+    --==================================================
+
     local character =
         realPlayer.Character
 
@@ -2176,6 +2553,7 @@ local function processPlayerTask(
             character:FindFirstChild(
                 "HumanoidRootPart"
             )
+
     end
 
     local photoPosition
@@ -2189,7 +2567,12 @@ local function processPlayerTask(
 
         photoPosition =
             target.position
+
     end
+
+    --==================================================
+    -- PHOTO
+    --==================================================
 
     takePhoto(
         photoPosition
@@ -2213,9 +2596,7 @@ end
 -- PROCESS AREA TASK
 --==================================================
 
-local function processAreaTask(
-    taskText
-)
+local function processAreaTask(taskText)
 
     local area =
         resolveArea(
@@ -2335,7 +2716,7 @@ local function processTask()
     end
 
     --==================================================
-    -- AREA HAS PRIORITY
+    -- AREA PRIORITY
     --==================================================
 
     local area =
@@ -2408,7 +2789,6 @@ local farmLoopRunning = false
 
 local function farmLoop()
 
-    -- Prevent duplicate loops
     if farmLoopRunning then
         return
     end
@@ -2435,7 +2815,7 @@ end
 -- START FARMING
 --==================================================
 
-local function startFarming()
+function startFarming()
 
     if State.farming then
         return
@@ -2468,7 +2848,6 @@ local function startFarming()
 
     updateGUI()
 
-    -- Start job hanya saat ON
     startNewJob()
 
     task.wait(
@@ -2485,20 +2864,20 @@ local function startFarming()
 end
 
 --==================================================
--- STOP FARMING
+-- STOP FARMING FROM GUI
 --==================================================
 
-local function stopFarmingFromGUI()
+function stopFarmingFromGUI()
 
     if not State.farming then
+
         updateGUI()
+
         return
     end
 
-    -- Cancel movement
     cancelTween()
 
-    -- Stop job
     stopCurrentJob()
 
     State.farming = false
@@ -2518,23 +2897,6 @@ local function stopFarmingFromGUI()
 end
 
 --==================================================
--- GUI BUTTON
---==================================================
-
-local function toggleFarming()
-
-    if State.farming then
-
-        stopFarmingFromGUI()
-
-    else
-
-        startFarming()
-
-    end
-end
-
---==================================================
 -- CHARACTER INITIALIZATION
 --==================================================
 
@@ -2542,7 +2904,11 @@ local character =
     LocalPlayer.Character
 
 if character then
-    bindCharacter(character)
+
+    bindCharacter(
+        character
+    )
+
 end
 
 LocalPlayer.CharacterAdded:Connect(
@@ -2562,14 +2928,6 @@ LocalPlayer.CharacterAdded:Connect(
 createGUI()
 updateGUI()
 
-ToggleButton.MouseButton1Click:Connect(
-    function()
-
-        toggleFarming()
-
-    end
-)
-
 --==================================================
 -- INITIALIZATION
 --==================================================
@@ -2584,6 +2942,7 @@ task.spawn(function()
         attempts += 1
 
         task.wait(1)
+
     end
 
     if not phoneScreenPush
@@ -2600,7 +2959,6 @@ task.spawn(function()
     end
 
     --==================================================
-    -- IMPORTANT
     -- AUTO START DISABLED
     --==================================================
 
@@ -2612,6 +2970,7 @@ task.spawn(function()
     else
 
         State.farming = false
+
         updateGUI()
 
     end
@@ -2634,6 +2993,33 @@ end
 _G.StopFarming = function()
 
     stopFarmingFromGUI()
+
+end
+
+--==================================================
+-- SET DISTANCE
+--==================================================
+
+_G.SetPlayerDistance = function(value)
+
+    setPlayerDistance(
+        value
+    )
+
+    print(
+        "Player Distance:",
+        S.PlayerDistance
+    )
+
+end
+
+--==================================================
+-- GET DISTANCE
+--==================================================
+
+_G.GetPlayerDistance = function()
+
+    return S.PlayerDistance
 
 end
 
@@ -2675,6 +3061,8 @@ _G.GetStatus = function()
         targetUsername =
             State.targetUsername,
 
+        playerDistance =
+            S.PlayerDistance,
     }
 
 end
@@ -2732,6 +3120,11 @@ _G.PhotoFarmStatus = function()
     print(
         "Real Username :",
         State.targetUsername
+    )
+
+    print(
+        "Distance      :",
+        S.PlayerDistance
     )
 
     print(
