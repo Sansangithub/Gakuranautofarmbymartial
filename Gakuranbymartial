@@ -2,7 +2,9 @@
 --// Photo Job Farming
 --// WHITELIST AREA ONLY
 --// PLAYER PHOTO = FIND PLAYER -> VIEW PLAYER -> TELEPORT -> PHOTO
---// VIEW PLAYER UNTIL PHOTO SUCCESS -> UNVIEW
+--// VIEW PLAYER LIKE INFINITE YIELD VIEW
+--// VIEW DURATION = CONFIGURABLE
+--// VIEW UNTIL PHOTO SUCCESS -> UNVIEW
 --// AREA PHOTO = WHITELIST AREA -> PHOTO
 --// MUSIC ROOM = AUTO REROLL
 --// INVALID TASK = STOP -> RESTART -> CHECK AGAIN
@@ -10,7 +12,6 @@
 --// FLY = AUTO ON WHEN FARMING STARTS
 --// PLAYER NOT FOUND = STOP JOB -> START JOB -> CHECK NEW TASK
 --// FAST PHOTO MODE
---// PLAYER VIEW = CAMERA LOOK AT TARGET PLAYER
 --// NO PLAYER DISTANCE GUI
 --// NO PHOTO RANGE CHECK
 
@@ -40,30 +41,53 @@ local Settings = {
         MaxDuration = 0.35,
         MinDuration = 0.05,
 
+        --==================================================
         -- PLAYER VIEW
-        PlayerViewEnabled = true,
-        PlayerViewSmooth  = true,
-        PlayerViewSpeed   = 18,
+        --==================================================
 
+        PlayerViewEnabled = true,
+
+        -- Infinite Yield style:
+        -- CameraSubject = Target Humanoid
+        PlayerViewDuration = 1.5,
+
+        --==================================================
         -- FLY
+        --==================================================
+
         FlyEnabled = true,
 
+        --==================================================
         -- PHOTO
+        --==================================================
+
         MaxAttempts = 20,
 
+        --==================================================
         -- PLAYER SEARCH
+        --==================================================
+
         PlayerSearchAttempts = 20,
         PlayerSearchDelay    = 0.03,
 
+        --==================================================
         -- PLAYER LOOP
+        --==================================================
+
         PlayerTeleportDelay = 0.03,
 
+        --==================================================
         -- RESTART
+        --==================================================
+
         RestartDelay   = 0.15,
         StartDelay     = 0.15,
         AssignmentWait = 0.05,
 
+        --==================================================
         -- WAIT AFTER SUCCESS
+        --==================================================
+
         SuccessDelay = 0.3,
     }
 }
@@ -218,12 +242,11 @@ local CameraState = {
 
     targetPlayer = nil,
     targetCharacter = nil,
+    targetHumanoid = nil,
     targetHRP = nil,
 
     previousCameraType = nil,
     previousCameraSubject = nil,
-
-    connection = nil,
 }
 
 --==================================================
@@ -286,7 +309,6 @@ local stopFly
 
 local startPlayerView
 local stopPlayerView
-local updatePlayerView
 
 --==================================================
 -- GUI
@@ -295,7 +317,9 @@ local updatePlayerView
 local function createGUI()
 
     local PlayerGui =
-        LocalPlayer:WaitForChild("PlayerGui")
+        LocalPlayer:WaitForChild(
+            "PlayerGui"
+        )
 
     local oldGui =
         PlayerGui:FindFirstChild(
@@ -669,15 +693,10 @@ end
 
 --==================================================
 -- CAMERA
+-- INFINITE YIELD STYLE VIEW
 --==================================================
 
 local function getCamera()
-
-    if Camera
-        and Camera.Parent then
-
-        return Camera
-    end
 
     Camera =
         Workspace.CurrentCamera
@@ -706,14 +725,19 @@ startPlayerView = function(player)
         return false
     end
 
+    local targetHumanoid =
+        character:FindFirstChildOfClass(
+            "Humanoid"
+        )
+
+    if not targetHumanoid then
+        return false
+    end
+
     local targetHRP =
         character:FindFirstChild(
             "HumanoidRootPart"
         )
-
-    if not targetHRP then
-        return false
-    end
 
     local camera =
         getCamera()
@@ -722,23 +746,34 @@ startPlayerView = function(player)
         return false
     end
 
-    -- Kalau sedang melihat player
-    -- yang sama, cukup update target.
+    --==================================================
+    -- SAME TARGET
+    --==================================================
 
     if CameraState.active
-        and CameraState.targetPlayer == player
-        and CameraState.connection then
+        and CameraState.targetPlayer == player then
 
         CameraState.targetCharacter =
             character
 
+        CameraState.targetHumanoid =
+            targetHumanoid
+
         CameraState.targetHRP =
             targetHRP
+
+        camera.CameraType =
+            Enum.CameraType.Custom
+
+        camera.CameraSubject =
+            targetHumanoid
 
         return true
     end
 
-    -- Hentikan view sebelumnya.
+    --==================================================
+    -- SAVE CURRENT CAMERA
+    --==================================================
 
     stopPlayerView()
 
@@ -756,160 +791,35 @@ startPlayerView = function(player)
     CameraState.targetCharacter =
         character
 
+    CameraState.targetHumanoid =
+        targetHumanoid
+
     CameraState.targetHRP =
         targetHRP
 
     --==================================================
-    -- MANUAL PLAYER VIEW
+    -- INFINITE YIELD STYLE
     --==================================================
     --
-    -- BUKAN:
-    -- camera.CameraSubject = target.Humanoid
+    -- CameraSubject diarahkan langsung ke
+    -- Humanoid target.
     --
-    -- Jadi ini bukan Roblox spectate mode.
+    -- Tidak memakai Scriptable camera.
+    -- Tidak membuat kamera manual.
     --
-    -- Kamera dibuat Scriptable dan diarahkan
-    -- secara manual ke karakter target.
+    -- Hasilnya seperti command:
+    --
+    -- view PlayerName
+    --
     --==================================================
 
     camera.CameraType =
-        Enum.CameraType.Scriptable
+        Enum.CameraType.Custom
 
-    updatePlayerView(
-        targetHRP,
-        1
-    )
-
-    CameraState.connection =
-        RunService.RenderStepped:Connect(
-            function(dt)
-
-                if not CameraState.active then
-                    return
-                end
-
-                local currentPlayer =
-                    CameraState.targetPlayer
-
-                if not currentPlayer then
-
-                    stopPlayerView()
-
-                    return
-                end
-
-                local currentCharacter =
-                    currentPlayer.Character
-
-                if not currentCharacter then
-                    return
-                end
-
-                local currentHRP =
-                    currentCharacter:FindFirstChild(
-                        "HumanoidRootPart"
-                    )
-
-                if not currentHRP then
-                    return
-                end
-
-                CameraState.targetCharacter =
-                    currentCharacter
-
-                CameraState.targetHRP =
-                    currentHRP
-
-                updatePlayerView(
-                    currentHRP,
-                    dt
-                )
-            end
-        )
+    camera.CameraSubject =
+        targetHumanoid
 
     return true
-end
-
---==================================================
--- UPDATE PLAYER VIEW
---==================================================
-
-updatePlayerView = function(
-    targetHRP,
-    dt
-)
-
-    if not CameraState.active then
-        return
-    end
-
-    local camera =
-        getCamera()
-
-    if not camera then
-        return
-    end
-
-    if not targetHRP
-        or not targetHRP.Parent then
-
-        return
-    end
-
-    local targetPosition =
-        targetHRP.Position
-
-    -- Posisi kamera relatif terhadap target.
-    -- Ini hanya posisi kamera, BUKAN player distance GUI.
-
-    local cameraDistance = 8
-    local cameraHeight = 3
-
-    local desiredPosition =
-        targetPosition
-        - targetHRP.CFrame.LookVector
-            * cameraDistance
-
-        + Vector3.new(
-            0,
-            cameraHeight,
-            0
-        )
-
-    local lookPosition =
-        targetPosition
-        + Vector3.new(
-            0,
-            1.5,
-            0
-        )
-
-    local desiredCFrame =
-        CFrame.lookAt(
-            desiredPosition,
-            lookPosition
-        )
-
-    if S.PlayerViewSmooth then
-
-        local alpha =
-            math.clamp(
-                dt * S.PlayerViewSpeed,
-                0,
-                1
-            )
-
-        camera.CFrame =
-            camera.CFrame:Lerp(
-                desiredCFrame,
-                alpha
-            )
-
-    else
-
-        camera.CFrame =
-            desiredCFrame
-    end
 end
 
 --==================================================
@@ -918,35 +828,27 @@ end
 
 stopPlayerView = function()
 
-    if CameraState.connection then
-
-        CameraState.connection:Disconnect()
-
-        CameraState.connection = nil
-    end
-
     local camera =
         getCamera()
 
     if camera then
 
-        if CameraState.previousCameraType then
+        --==================================================
+        -- RESTORE LOCAL CHARACTER
+        --==================================================
 
-            camera.CameraType =
-                CameraState.previousCameraType
+        camera.CameraType =
+            CameraState.previousCameraType
+            or Enum.CameraType.Custom
 
-        else
-
-            camera.CameraType =
-                Enum.CameraType.Custom
-        end
-
-        if CameraState.previousCameraSubject then
+        if CameraState.previousCameraSubject
+            and CameraState.previousCameraSubject.Parent then
 
             camera.CameraSubject =
                 CameraState.previousCameraSubject
 
-        elseif Humanoid then
+        elseif Humanoid
+            and Humanoid.Parent then
 
             camera.CameraSubject =
                 Humanoid
@@ -957,10 +859,106 @@ stopPlayerView = function()
 
     CameraState.targetPlayer = nil
     CameraState.targetCharacter = nil
+    CameraState.targetHumanoid = nil
     CameraState.targetHRP = nil
 
     CameraState.previousCameraType = nil
     CameraState.previousCameraSubject = nil
+end
+
+--==================================================
+-- WAIT PLAYER VIEW
+--==================================================
+
+local function waitPlayerView()
+
+    if not S.PlayerViewEnabled then
+        return true
+    end
+
+    local duration =
+        tonumber(
+            S.PlayerViewDuration
+        ) or 1.5
+
+    duration =
+        math.max(
+            0,
+            duration
+        )
+
+    if duration <= 0 then
+        return true
+    end
+
+    local started =
+        os.clock()
+
+    while State.farming do
+
+        if not CameraState.active then
+            break
+        end
+
+        if os.clock()
+            - started >= duration then
+
+            break
+        end
+
+        -- Pastikan kamera tetap mengikuti
+        -- target seperti Infinite Yield.
+
+        local player =
+            CameraState.targetPlayer
+
+        if not player then
+            break
+        end
+
+        local character =
+            player.Character
+
+        if not character then
+            break
+        end
+
+        local targetHumanoid =
+            character:FindFirstChildOfClass(
+                "Humanoid"
+            )
+
+        if not targetHumanoid then
+            break
+        end
+
+        local camera =
+            getCamera()
+
+        if camera then
+
+            camera.CameraType =
+                Enum.CameraType.Custom
+
+            camera.CameraSubject =
+                targetHumanoid
+        end
+
+        CameraState.targetCharacter =
+            character
+
+        CameraState.targetHumanoid =
+            targetHumanoid
+
+        CameraState.targetHRP =
+            character:FindFirstChild(
+                "HumanoidRootPart"
+            )
+
+        task.wait()
+    end
+
+    return true
 end
 
 --==================================================
@@ -1552,8 +1550,6 @@ local function getPlayerByText(targetText)
     local lowerTarget =
         target:lower()
 
-    -- EXACT USERNAME
-
     for _, player in ipairs(
         Players:GetPlayers()
     ) do
@@ -1566,8 +1562,6 @@ local function getPlayerByText(targetText)
         end
     end
 
-    -- EXACT DISPLAY NAME
-
     for _, player in ipairs(
         Players:GetPlayers()
     ) do
@@ -1579,8 +1573,6 @@ local function getPlayerByText(targetText)
             return player
         end
     end
-
-    -- PARTIAL
 
     for _, player in ipairs(
         Players:GetPlayers()
@@ -1692,8 +1684,6 @@ local function findPlayerByInfo(
         return nil, nil, nil
     end
 
-    -- PASS 1: CHARACTER
-
     for _, player in ipairs(
         Players:GetPlayers()
     ) do
@@ -1735,8 +1725,6 @@ local function findPlayerByInfo(
             end
         end
     end
-
-    -- PASS 2: WORKSPACE
 
     for _, object in ipairs(
         Workspace:GetDescendants()
@@ -1789,8 +1777,6 @@ local function findPlayerByInfo(
             end
         end
     end
-
-    -- PASS 3: PLAYER LIST
 
     local directPlayer =
         getPlayerByText(
@@ -2729,15 +2715,6 @@ local function getPlayerTeleportCFrame(
         return nil
     end
 
-    -- Tidak memakai PlayerDistance.
-    --
-    -- Posisi tetap menggunakan offset kecil
-    -- supaya LocalPlayer tidak berada tepat
-    -- di dalam karakter target.
-    --
-    -- Ini bukan setting distance dan tidak ada
-    -- kontrol distance di GUI.
-
     local targetPosition =
         targetHRP.Position
 
@@ -2793,30 +2770,21 @@ local function processPlayerTask(
         realPlayer.Name
 
     --==================================================
-    -- VIEW PLAYER
-    --==================================================
-
-    if S.PlayerViewEnabled then
-
-        startPlayerView(
-            realPlayer
-        )
-    end
-
-    --==================================================
-    -- TELEPORT + PHOTO LOOP
+    -- PLAYER VIEW LOOP
     --==================================================
 
     while State.farming do
 
         --==================================================
-        -- REFRESH TARGET CHARACTER
+        -- REFRESH TARGET
         --==================================================
 
         local character =
             realPlayer.Character
 
         if not character then
+
+            stopPlayerView()
 
             task.wait(
                 S.PlayerSearchDelay
@@ -2835,23 +2803,14 @@ local function processPlayerTask(
                 State.targetUsername =
                     realPlayer.Name
 
-                if S.PlayerViewEnabled then
-
-                    startPlayerView(
-                        realPlayer
-                    )
-                end
+                continue
 
             else
-
-                stopPlayerView()
 
                 restartJobPlayerNotFound()
 
                 return false
             end
-
-            continue
         end
 
         local targetHRP =
@@ -2859,7 +2818,13 @@ local function processPlayerTask(
                 "HumanoidRootPart"
             )
 
-        if not targetHRP then
+        local targetHumanoid =
+            character:FindFirstChildOfClass(
+                "Humanoid"
+            )
+
+        if not targetHRP
+            or not targetHumanoid then
 
             task.wait(
                 S.PlayerSearchDelay
@@ -2877,27 +2842,47 @@ local function processPlayerTask(
         end
 
         --==================================================
-        -- KEEP VIEW ON PLAYER
+        -- VIEW LIKE INFINITE YIELD
         --==================================================
 
         if S.PlayerViewEnabled then
 
-            if not CameraState.active
-                or CameraState.targetPlayer
-                    ~= realPlayer then
-
+            local viewStarted =
                 startPlayerView(
                     realPlayer
                 )
 
-            else
+            if viewStarted then
 
-                CameraState.targetCharacter =
-                    character
+                -- View selama 1.5 detik
+                -- atau sesuai setting.
 
-                CameraState.targetHRP =
-                    targetHRP
+                waitPlayerView()
             end
+        end
+
+        if not State.farming then
+            break
+        end
+
+        --==================================================
+        -- REFRESH TARGET AFTER VIEW
+        --==================================================
+
+        character =
+            realPlayer.Character
+
+        if not character then
+            continue
+        end
+
+        targetHRP =
+            character:FindFirstChild(
+                "HumanoidRootPart"
+            )
+
+        if not targetHRP then
+            continue
         end
 
         --==================================================
@@ -2918,7 +2903,7 @@ local function processPlayerTask(
         end
 
         --==================================================
-        -- REFRESH CAMERA
+        -- RE-ACTIVATE VIEW
         --==================================================
 
         if S.PlayerViewEnabled then
@@ -2940,7 +2925,7 @@ local function processPlayerTask(
         if success then
 
             --==================================================
-            -- PHOTO SUCCESS
+            -- SUCCESS
             --==================================================
 
             setCollision(true)
@@ -2953,9 +2938,7 @@ local function processPlayerTask(
             State.targetPlayer = ""
             State.targetUsername = ""
 
-            --==================================================
-            -- UNVIEW ONLY AFTER PHOTO SUCCESS
-            --==================================================
+            -- Unview setelah foto berhasil.
 
             stopPlayerView()
 
@@ -2967,12 +2950,13 @@ local function processPlayerTask(
         end
 
         --==================================================
-        -- PHOTO NOT SUCCESS
+        -- PHOTO FAILED
         --==================================================
         --
-        -- View tetap aktif.
-        -- Target dicari/refresh lagi.
+        -- View akan diulang pada loop berikutnya.
         --==================================================
+
+        stopPlayerView()
 
         task.wait(
             S.PlayerTeleportDelay
@@ -2993,8 +2977,6 @@ end
 local function processAreaTask(
     taskText
 )
-
-    -- Area tidak menggunakan player view.
 
     stopPlayerView()
 
@@ -3369,6 +3351,36 @@ Workspace:GetPropertyChangedSignal(
 
         Camera =
             Workspace.CurrentCamera
+
+        -- Jika sedang view, pasang lagi
+        -- CameraSubject ke target.
+
+        if CameraState.active
+            and CameraState.targetPlayer then
+
+            local target =
+                CameraState.targetPlayer
+
+            local character =
+                target.Character
+
+            if character then
+
+                local targetHumanoid =
+                    character:FindFirstChildOfClass(
+                        "Humanoid"
+                    )
+
+                if targetHumanoid then
+
+                    Camera.CameraType =
+                        Enum.CameraType.Custom
+
+                    Camera.CameraSubject =
+                        targetHumanoid
+                end
+            end
+        end
     end
 )
 
@@ -3536,12 +3548,81 @@ _G.SetPlayerView = function(
 end
 
 --==================================================
+-- SET PLAYER VIEW DURATION
+--==================================================
+
+_G.SetPlayerViewDuration = function(
+    seconds
+)
+
+    seconds =
+        tonumber(seconds)
+
+    if not seconds then
+        return false
+    end
+
+    if seconds < 0 then
+        seconds = 0
+    end
+
+    S.PlayerViewDuration =
+        seconds
+
+    return true
+end
+
+--==================================================
+-- GET PLAYER VIEW DURATION
+--==================================================
+
+_G.GetPlayerViewDuration = function()
+
+    return S.PlayerViewDuration
+end
+
+--==================================================
 -- GET PLAYER VIEW
 --==================================================
 
 _G.GetPlayerView = function()
 
     return S.PlayerViewEnabled
+end
+
+--==================================================
+-- MANUAL VIEW PLAYER
+--==================================================
+
+_G.ViewPlayer = function(
+    playerName
+)
+
+    if not playerName then
+        return false
+    end
+
+    local player =
+        getPlayerByText(
+            tostring(playerName)
+        )
+
+    if not player then
+        return false
+    end
+
+    return startPlayerView(
+        player
+    )
+end
+
+--==================================================
+-- MANUAL UNVIEW
+--==================================================
+
+_G.UnviewPlayer = function()
+
+    stopPlayerView()
 end
 
 --==================================================
@@ -3572,6 +3653,9 @@ _G.GetStatus = function()
 
         playerViewEnabled =
             S.PlayerViewEnabled,
+
+        playerViewDuration =
+            S.PlayerViewDuration,
 
         lastTask =
             State.lastTask,
@@ -3604,62 +3688,68 @@ _G.PhotoFarmStatus = function()
     )
 
     print(
-        "Farming       :",
+        "Farming          :",
         State.farming
     )
 
     print(
-        "Processing    :",
+        "Processing       :",
         State.processing
     )
 
     print(
-        "Restarting    :",
+        "Restarting       :",
         State.restarting
     )
 
     print(
-        "Fly           :",
+        "Fly              :",
         State.flyEnabled
     )
 
     print(
-        "Player View   :",
+        "Player View      :",
         CameraState.active
     )
 
     print(
-        "View Enabled  :",
+        "View Enabled     :",
         S.PlayerViewEnabled
     )
 
     print(
-        "Task          :",
+        "View Duration    :",
+        S.PlayerViewDuration,
+        "seconds"
+    )
+
+    print(
+        "Task             :",
         State.lastTask
     )
 
     print(
-        "Count         :",
+        "Count            :",
         State.taskCount
     )
 
     print(
-        "Restarts      :",
+        "Restarts         :",
         State.restartCount
     )
 
     print(
-        "Reason        :",
+        "Reason           :",
         State.stopReason
     )
 
     print(
-        "Target Player :",
+        "Target Player    :",
         State.targetPlayer
     )
 
     print(
-        "Real Username :",
+        "Real Username    :",
         State.targetUsername
     )
 
