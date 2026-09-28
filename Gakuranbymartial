@@ -1,15 +1,16 @@
 --// Made by @DirectMemoryAccess
 --// Photo Job Farming
 --// WHITELIST AREA ONLY
---// PLAYER PHOTO = FIND INFO -> TELEPORT ONCE -> PHOTO
+--// PLAYER PHOTO = FIND INFO -> TELEPORT UNTIL PHOTO SUCCESS
 --// AREA PHOTO = WHITELIST AREA -> PHOTO
 --// MUSIC ROOM = AUTO REROLL
 --// INVALID TASK = STOP -> RESTART -> CHECK AGAIN
 --// GUI = ON / OFF
---// PLAYER TELEPORT = ONCE, NO FOLLOW LOOP
+--// PLAYER TELEPORT = REPEATED UNTIL PHOTO SUCCESS
 --// PLAYER DISTANCE = GUI CONTROL
 --// FLY = AUTO ON WHEN FARMING STARTS
 --// PHOTO TIMEOUT = AUTO STOP JOB -> START JOB
+--// FAST PHOTO MODE
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -29,7 +30,7 @@ local Settings = {
         Enabled   = true,
         AutoStart = false,
 
-        RefreshRate = 0.08,
+        RefreshRate = 0.03,
 
         --==================================================
         -- MOVEMENT
@@ -69,8 +70,14 @@ local Settings = {
         -- PLAYER SEARCH
         --==================================================
 
-        PlayerSearchAttempts = 30,
-        PlayerSearchDelay = 0.05,
+        PlayerSearchAttempts = 50,
+        PlayerSearchDelay = 0.02,
+
+        --==================================================
+        -- PLAYER PHOTO LOOP
+        --==================================================
+
+        PlayerTeleportDelay = 0.03,
 
         --==================================================
         -- RESTART
@@ -534,7 +541,7 @@ local function createGUI()
     StatusLabel.Size =
         UDim2.new(
             0,
-            120,
+            150,
             0,
             25
         )
@@ -1396,14 +1403,8 @@ startFly = function()
 
     State.flyEnabled = true
 
-    --==================================================
-    -- ATTACHMENT
-    --==================================================
-
     local attachment =
-        Instance.new(
-            "Attachment"
-        )
+        Instance.new("Attachment")
 
     attachment.Name =
         "PhotoFarmFlyAttachment"
@@ -1413,14 +1414,8 @@ startFly = function()
     State.flyAttachment =
         attachment
 
-    --==================================================
-    -- LINEAR VELOCITY
-    --==================================================
-
     local velocity =
-        Instance.new(
-            "LinearVelocity"
-        )
+        Instance.new("LinearVelocity")
 
     velocity.Name =
         "PhotoFarmFlyVelocity"
@@ -1445,14 +1440,8 @@ startFly = function()
     State.flyVelocity =
         velocity
 
-    --==================================================
-    -- ORIENTATION
-    --==================================================
-
     local orientation =
-        Instance.new(
-            "AlignOrientation"
-        )
+        Instance.new("AlignOrientation")
 
     orientation.Name =
         "PhotoFarmFlyOrientation"
@@ -1475,16 +1464,8 @@ startFly = function()
     State.flyOrientation =
         orientation
 
-    --==================================================
-    -- HUMANOID
-    --==================================================
-
     Humanoid.PlatformStand = true
     Humanoid.AutoRotate = false
-
-    --==================================================
-    -- KEEP AIRBORNE
-    --==================================================
 
     State.flyConnection =
         RunService.Heartbeat:Connect(
@@ -1520,10 +1501,6 @@ startFly = function()
 
                     return
                 end
-
-                --==================================================
-                -- ZERO VELOCITY = HOVER
-                --==================================================
 
                 State.flyVelocity.VectorVelocity =
                     Vector3.zero
@@ -1879,6 +1856,7 @@ local function getRealPlayerFromModel(model)
 
             return candidate
         end
+
     end
 
     return nil
@@ -2026,7 +2004,6 @@ local function findPlayerByInfo(targetText)
 
             if player.Name:lower()
                 == targetLower
-
                 or player.DisplayName:lower()
                 == targetLower then
 
@@ -2326,7 +2303,7 @@ local function startNewJob()
 end
 
 --==================================================
--- RESTART JOB AFTER TIMEOUT
+-- RESTART AFTER TIMEOUT
 --==================================================
 
 local function restartJobAfterPhotoTimeout()
@@ -2351,8 +2328,6 @@ local function restartJobAfterPhotoTimeout()
 
     cancelTween()
 
-    -- STOP CURRENT JOB
-
     stopCurrentJob()
 
     State.restartCount += 1
@@ -2367,8 +2342,6 @@ local function restartJobAfterPhotoTimeout()
 
         return false
     end
-
-    -- START AGAIN
 
     startNewJob()
 
@@ -2796,7 +2769,7 @@ local function smoothTween(targetPosition)
 end
 
 --==================================================
--- TELEPORT PLAYER ONCE
+-- TELEPORT PLAYER
 --==================================================
 
 local function teleportToPlayerOnce(target)
@@ -2882,8 +2855,6 @@ local function teleportToPlayerOnce(target)
     HRP.CFrame =
         newCFrame
 
-    task.wait()
-
     setCollision(true)
 
     State.tweening = false
@@ -2892,7 +2863,7 @@ local function teleportToPlayerOnce(target)
 end
 
 --==================================================
--- TAKE PHOTO
+-- FAST PHOTO
 --==================================================
 
 local function takePhoto(targetPosition)
@@ -2953,6 +2924,10 @@ local function takePhoto(targetPosition)
         24
     )
 
+    --==================================================
+    -- PHONE PUSH
+    --==================================================
+
     local pushSuccess =
         pcall(
             phoneScreenPush.FireServer,
@@ -2964,18 +2939,19 @@ local function takePhoto(targetPosition)
         return false
     end
 
-    task.wait(0.15)
-
     if not State.farming then
         return false
     end
+
+    --==================================================
+    -- SUBMIT IMMEDIATELY
+    --==================================================
 
     local lookAt =
         targetPosition
         or (
             HRP.Position
-            + HRP.CFrame.LookVector
-            * 10
+            + HRP.CFrame.LookVector * 10
         )
 
     local submitSuccess =
@@ -2983,19 +2959,18 @@ local function takePhoto(targetPosition)
             photoJobSubmit.InvokeServer,
             photoJobSubmit,
             "Submit",
-            CFrame.new(
+            CFrame.lookAt(
                 HRP.Position,
                 lookAt
             )
         )
-
-    task.wait(0.15)
 
     return submitSuccess
 end
 
 --==================================================
 -- PROCESS PLAYER TASK
+-- TELEPORT REPEATEDLY UNTIL PHOTO
 --==================================================
 
 local function processPlayerTask(taskText)
@@ -3027,46 +3002,24 @@ local function processPlayerTask(taskText)
         realPlayer.Name
 
     --==================================================
-    -- TELEPORT ONCE
-    --==================================================
-
-    local moved =
-        teleportToPlayerOnce(
-            target
-        )
-
-    if not moved then
-
-        State.lastTask = ""
-
-        return false
-    end
-
-    if not State.farming then
-        return false
-    end
-
-    --==================================================
-    -- PHOTO TIMER START
+    -- START PHOTO TIMER
     --==================================================
 
     local photoStart =
         os.clock()
 
-    local photoTaken = false
+    --==================================================
+    -- KEEP TELEPORTING + PHOTO
+    --==================================================
 
     while State.farming do
-
-        local elapsed =
-            os.clock()
-            - photoStart
 
         --==================================================
         -- TIMEOUT
         --==================================================
 
-        if elapsed >=
-            S.PhotoTimeout then
+        if os.clock() - photoStart
+            >= S.PhotoTimeout then
 
             restartJobAfterPhotoTimeout()
 
@@ -3080,68 +3033,129 @@ local function processPlayerTask(taskText)
         local character =
             realPlayer.Character
 
-        local targetHRP
+        if not character then
 
-        if character then
+            task.wait(
+                S.PlayerSearchDelay
+            )
 
-            targetHRP =
-                character:FindFirstChild(
-                    "HumanoidRootPart"
-                )
+            continue
+        end
+
+        local targetHRP =
+            character:FindFirstChild(
+                "HumanoidRootPart"
+            )
+
+        if not targetHRP then
+
+            task.wait(
+                S.PlayerSearchDelay
+            )
+
+            continue
+        end
+
+        if not HRP
+            or not HRP.Parent then
+
+            return false
         end
 
         --==================================================
-        -- CHECK DISTANCE
+        -- GET CURRENT TARGET POSITION
         --==================================================
 
-        if targetHRP
-            and HRP then
+        local targetPosition =
+            targetHRP.Position
 
-            local distance =
-                (
-                    HRP.Position
-                    - targetHRP.Position
-                ).Magnitude
+        local direction =
+            HRP.Position
+            - targetPosition
 
-            if distance <=
-                S.PhotoRange then
+        if direction.Magnitude < 0.1 then
 
-                local success =
-                    takePhoto(
-                        targetHRP.Position
-                    )
+            direction =
+                -targetHRP.CFrame.LookVector
 
-                if success then
+        else
 
-                    photoTaken = true
+            direction =
+                direction.Unit
+        end
 
-                    break
-                end
+        local distance =
+            math.max(
+                0,
+                tonumber(
+                    S.PlayerDistance
+                ) or 3
+            )
+
+        local teleportPosition =
+            targetPosition
+            + direction * distance
+
+        --==================================================
+        -- TELEPORT
+        --==================================================
+
+        setCollision(false)
+
+        HRP.CFrame =
+            CFrame.lookAt(
+                teleportPosition,
+                targetPosition
+            )
+
+        --==================================================
+        -- PHOTO RANGE
+        --==================================================
+
+        local currentDistance =
+            (
+                HRP.Position
+                - targetHRP.Position
+            ).Magnitude
+
+        if currentDistance <=
+            S.PhotoRange then
+
+            --==================================================
+            -- TAKE PHOTO
+            --==================================================
+
+            local success =
+                takePhoto(
+                    targetHRP.Position
+                )
+
+            if success then
+
+                setCollision(true)
+
+                State.tweening = false
+                State.processing = false
+
+                State.lastTask = ""
+                State.targetPlayer = ""
+                State.targetUsername = ""
+
+                return true
             end
         end
 
-        task.wait(0.1)
+        --==================================================
+        -- PLAYER MAY HAVE MOVED
+        -- LOOP AGAIN
+        --==================================================
+
+        task.wait(
+            S.PlayerTeleportDelay
+        )
     end
 
-    --==================================================
-    -- SUCCESS
-    --==================================================
-
-    if photoTaken then
-
-        setCollision(true)
-
-        State.tweening = false
-        State.processing = false
-
-        task.wait(0.5)
-
-        State.lastTask = ""
-        State.targetPlayer = ""
-        State.targetUsername = ""
-
-        return true
-    end
+    setCollision(true)
 
     return false
 end
@@ -3197,7 +3211,7 @@ local function processAreaTask(taskText)
         return false
     end
 
-    task.wait(0.2)
+    task.wait(0.05)
 
     takePhoto(
         position
@@ -3208,7 +3222,7 @@ local function processAreaTask(taskText)
     State.tweening = false
     State.processing = false
 
-    task.wait(0.5)
+    task.wait(0.3)
 
     State.lastTask = ""
 
@@ -3398,7 +3412,7 @@ startFarming = function()
     setCollision(true)
 
     --==================================================
-    -- START FLY
+    -- FLY
     --==================================================
 
     if S.FlyEnabled then
