@@ -31,9 +31,9 @@ local Settings = {
         MaxAttempts  = 20,
 
         -- RESTART / REROLL
-        RestartDelay   = 0.04,
-        StartDelay     = 0.07,
-        AssignmentWait = 0.06,
+        RestartDelay   = 0.01,
+        StartDelay     = 0.02,
+        AssignmentWait = 0.02,
     }
 }
 
