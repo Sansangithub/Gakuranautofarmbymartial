@@ -1,16 +1,18 @@
-
 --// Made by @DirectMemoryAccess
 --// PHOTO JOB FARMING - FAST / ACCURATE
---// MOBILE CHAT + AUTO VIEW
+--// MOBILE CHAT + AUTO ;VIEW COMMAND
+--// NO AUTO SPECTATE WHILE FARMING
 --// WHITELIST AREA ONLY
---// PLAYER PHOTO = FIND PLAYER -> VIEW -> TELEPORT -> FAST PHOTO
+--// PLAYER PHOTO = FIND PLAYER -> TELEPORT -> FAST PHOTO
 --// SAME PLAYER = ;VIEW ONLY ONCE
 --// DIFFERENT PLAYER = NEW ;VIEW
---// AREA PHOTO = WHITELIST AREA -> TELEPORT -> PHOTO
+--// AREA PHOTO = FIND AREA -> TELEPORT -> PHOTO
 --// MUSIC ROOM = AUTO REROLL
 --// INVALID TASK = RESTART -> CHECK AGAIN
+--// TELEPORT = VERIFY + RETRY
+--// PHOTO = CONFIRM + RETRY
 --// GUI = MOBILE FRIENDLY
---// FLY = AUTO ON WHEN FARMING STARTS
+--// FLY = OPTIONAL
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -29,42 +31,49 @@ local Settings = {
         Enabled = true,
         AutoStart = false,
 
-        RefreshRate = 0.015,
+        -- FARM LOOP
+        RefreshRate = 0.01,
 
         -- AREA MOVEMENT
-        TweenSpeed = 300,
+        TweenSpeed = 350,
         MaxDistance = 1.0,
-        MaxDuration = 0.15,
-        MinDuration = 0.02,
+        MaxDuration = 0.12,
+        MinDuration = 0.015,
 
-        -- PLAYER VIEW
-        PlayerViewEnabled = true,
-        PlayerViewDuration = 0.15,
+        -- IMPORTANT:
+        -- NO AUTO SPECTATE DURING FARMING
+        PlayerViewEnabled = false,
+        PlayerViewDuration = 0,
 
-        -- AUTO ;VIEW
+        -- AUTO ;VIEW CHAT COMMAND
         AutoViewCommandEnabled = false,
-        AutoViewCommandDelay = 0.05,
+        AutoViewCommandDelay = 0.03,
 
         -- FLY
         FlyEnabled = true,
 
-        -- SEARCH
-        PlayerSearchAttempts = 12,
-        PlayerSearchDelay = 0.015,
+        -- PLAYER SEARCH
+        PlayerSearchAttempts = 15,
+        PlayerSearchDelay = 0.01,
 
         -- TELEPORT
-        PlayerTeleportDelay = 0.01,
+        PlayerTeleportDelay = 0,
+        TeleportRetryCount = 5,
+        TeleportRetryDelay = 0.015,
+        TeleportDistanceTolerance = 3.5,
 
         -- RESTART
-        RestartDelay = 0.05,
-        StartDelay = 0.05,
-        AssignmentWait = 0.02,
+        RestartDelay = 0.04,
+        AssignmentWait = 0.015,
+        StartCooldown = 0.25,
 
         -- PHOTO
         PhotoRetryCount = 4,
         PhotoRetryDelay = 0.015,
+        PhotoConfirmTimeout = 0.20,
 
-        SuccessDelay = 0.05,
+        -- SMALL SUCCESS DELAY
+        SuccessDelay = 0.035,
     }
 }
 
@@ -75,14 +84,21 @@ local S = Settings.Farming
 --==================================================
 
 local AREA_TASKS = {
+
     {
         canonical = "Rooftop",
-        aliases = {"rooftop", "roof"}
+        aliases = {
+            "rooftop",
+            "roof"
+        }
     },
 
     {
         canonical = "Courtyard",
-        aliases = {"courtyard", "court yard"}
+        aliases = {
+            "courtyard",
+            "court yard"
+        }
     },
 
     {
@@ -106,12 +122,18 @@ local AREA_TASKS = {
 
     {
         canonical = "Dojo Room",
-        aliases = {"dojo room", "dojo"}
+        aliases = {
+            "dojo room",
+            "dojo"
+        }
     },
 
     {
         canonical = "Music Room",
-        aliases = {"music room", "music"}
+        aliases = {
+            "music room",
+            "music"
+        }
     },
 
     {
@@ -157,7 +179,9 @@ local AREA_TASKS = {
 
     {
         canonical = "Lounge",
-        aliases = {"lounge"}
+        aliases = {
+            "lounge"
+        }
     },
 
     {
@@ -199,6 +223,7 @@ local Camera
 
 local CameraState = {
     active = false,
+
     targetPlayer = nil,
     targetCharacter = nil,
     targetHumanoid = nil,
@@ -246,7 +271,11 @@ local State = {
     lastViewCommand = "",
 
     lastChatMessage = "",
-    chatSending = false
+    chatSending = false,
+
+    lastStartRequest = 0,
+    photoAttempts = 0,
+    teleportAttempts = 0
 }
 
 local currentTween = nil
@@ -282,7 +311,7 @@ local stopPlayerView
 local updateGUI
 
 --==================================================
--- NORMALIZE
+-- NORMALIZE PLAYER NAME
 --==================================================
 
 local function normalizePlayerName(text)
@@ -297,6 +326,10 @@ local function normalizePlayerName(text)
 
     return text
 end
+
+--==================================================
+-- NORMALIZE TEXT
+--==================================================
 
 local function normalizeText(text)
 
@@ -326,6 +359,7 @@ local function normalizeText(text)
             text = text:sub(#prefix + 1)
             break
         end
+
     end
 
     if text:sub(1, 4) == "the " then
@@ -348,16 +382,20 @@ local function setChatStatus(text, success)
     ChatStatus.Text = text or ""
 
     if success == true then
+
         ChatStatus.TextColor3 =
             Color3.fromRGB(80, 255, 120)
 
     elseif success == false then
+
         ChatStatus.TextColor3 =
             Color3.fromRGB(255, 90, 90)
 
     else
+
         ChatStatus.TextColor3 =
             Color3.fromRGB(200, 200, 200)
+
     end
 end
 
@@ -387,6 +425,7 @@ local function sendChatMessage(message)
 
     local sent = false
 
+    -- MODERN TEXT CHAT
     if TextChatService.ChatVersion ==
         Enum.ChatVersion.TextChatService then
 
@@ -407,7 +446,11 @@ local function sendChatMessage(message)
 
                 local ok =
                     pcall(function()
-                        general:SendAsync(message)
+
+                        general:SendAsync(
+                            message
+                        )
+
                     end)
 
                 if ok then
@@ -426,7 +469,11 @@ local function sendChatMessage(message)
 
                         local ok =
                             pcall(function()
-                                channel:SendAsync(message)
+
+                                channel:SendAsync(
+                                    message
+                                )
+
                             end)
 
                         if ok then
@@ -439,6 +486,7 @@ local function sendChatMessage(message)
         end
     end
 
+    -- LEGACY CHAT
     if not sent then
 
         local chatEvents =
@@ -493,7 +541,7 @@ local function sendChatMessage(message)
 end
 
 --==================================================
--- AUTO VIEW
+-- AUTO VIEW COMMAND
 --==================================================
 
 local function sendViewCommand(playerName)
@@ -514,9 +562,8 @@ local function sendViewCommand(playerName)
     local normalized =
         playerName:lower()
 
-    -- PLAYER SAMA = JANGAN KIRIM ULANG
+    -- SAME PLAYER = DO NOT SEND AGAIN
     if State.lastViewTarget == normalized then
-
         return true
     end
 
@@ -568,8 +615,7 @@ local function createGUI()
     ScreenGui.ZIndexBehavior =
         Enum.ZIndexBehavior.Sibling
 
-    ScreenGui.Parent =
-        PlayerGui
+    ScreenGui.Parent = PlayerGui
 
     MainFrame =
         Instance.new("Frame")
@@ -592,8 +638,7 @@ local function createGUI()
     corner.CornerRadius =
         UDim.new(0, 10)
 
-    corner.Parent =
-        MainFrame
+    corner.Parent = MainFrame
 
     local Title =
         Instance.new("TextLabel")
@@ -611,13 +656,13 @@ local function createGUI()
         Color3.fromRGB(255, 255, 255)
 
     Title.TextSize = 16
-    Title.Font = Enum.Font.GothamBold
+    Title.Font =
+        Enum.Font.GothamBold
 
     Title.TextXAlignment =
         Enum.TextXAlignment.Left
 
-    Title.Parent =
-        MainFrame
+    Title.Parent = MainFrame
 
     StatusLabel =
         Instance.new("TextLabel")
@@ -635,13 +680,13 @@ local function createGUI()
         Color3.fromRGB(255, 80, 80)
 
     StatusLabel.TextSize = 14
-    StatusLabel.Font = Enum.Font.GothamBold
+    StatusLabel.Font =
+        Enum.Font.GothamBold
 
     StatusLabel.TextXAlignment =
         Enum.TextXAlignment.Left
 
-    StatusLabel.Parent =
-        MainFrame
+    StatusLabel.Parent = MainFrame
 
     ToggleButton =
         Instance.new("TextButton")
@@ -662,10 +707,10 @@ local function createGUI()
         Color3.fromRGB(255, 255, 255)
 
     ToggleButton.TextSize = 13
-    ToggleButton.Font = Enum.Font.GothamBold
+    ToggleButton.Font =
+        Enum.Font.GothamBold
 
-    ToggleButton.Parent =
-        MainFrame
+    ToggleButton.Parent = MainFrame
 
     local toggleCorner =
         Instance.new("UICorner")
@@ -673,8 +718,7 @@ local function createGUI()
     toggleCorner.CornerRadius =
         UDim.new(0, 7)
 
-    toggleCorner.Parent =
-        ToggleButton
+    toggleCorner.Parent = ToggleButton
 
     AutoViewButton =
         Instance.new("TextButton")
@@ -695,10 +739,10 @@ local function createGUI()
         Color3.fromRGB(255, 255, 255)
 
     AutoViewButton.TextSize = 12
-    AutoViewButton.Font = Enum.Font.GothamBold
+    AutoViewButton.Font =
+        Enum.Font.GothamBold
 
-    AutoViewButton.Parent =
-        MainFrame
+    AutoViewButton.Parent = MainFrame
 
     local viewCorner =
         Instance.new("UICorner")
@@ -706,8 +750,7 @@ local function createGUI()
     viewCorner.CornerRadius =
         UDim.new(0, 7)
 
-    viewCorner.Parent =
-        AutoViewButton
+    viewCorner.Parent = AutoViewButton
 
     local ChatLabel =
         Instance.new("TextLabel")
@@ -727,13 +770,13 @@ local function createGUI()
         Color3.fromRGB(180, 180, 180)
 
     ChatLabel.TextSize = 11
-    ChatLabel.Font = Enum.Font.GothamBold
+    ChatLabel.Font =
+        Enum.Font.GothamBold
 
     ChatLabel.TextXAlignment =
         Enum.TextXAlignment.Left
 
-    ChatLabel.Parent =
-        MainFrame
+    ChatLabel.Parent = MainFrame
 
     ChatBox =
         Instance.new("TextBox")
@@ -748,7 +791,6 @@ local function createGUI()
         Color3.fromRGB(40, 40, 40)
 
     ChatBox.BorderSizePixel = 0
-
     ChatBox.ClearTextOnFocus = false
     ChatBox.MultiLine = false
 
@@ -764,13 +806,13 @@ local function createGUI()
         Color3.fromRGB(255, 255, 255)
 
     ChatBox.TextSize = 13
-    ChatBox.Font = Enum.Font.Gotham
+    ChatBox.Font =
+        Enum.Font.Gotham
 
     ChatBox.TextXAlignment =
         Enum.TextXAlignment.Left
 
-    ChatBox.Parent =
-        MainFrame
+    ChatBox.Parent = MainFrame
 
     local boxCorner =
         Instance.new("UICorner")
@@ -778,8 +820,7 @@ local function createGUI()
     boxCorner.CornerRadius =
         UDim.new(0, 7)
 
-    boxCorner.Parent =
-        ChatBox
+    boxCorner.Parent = ChatBox
 
     SendChatButton =
         Instance.new("TextButton")
@@ -800,10 +841,10 @@ local function createGUI()
         Color3.fromRGB(255, 255, 255)
 
     SendChatButton.TextSize = 11
-    SendChatButton.Font = Enum.Font.GothamBold
+    SendChatButton.Font =
+        Enum.Font.GothamBold
 
-    SendChatButton.Parent =
-        MainFrame
+    SendChatButton.Parent = MainFrame
 
     local sendCorner =
         Instance.new("UICorner")
@@ -811,8 +852,7 @@ local function createGUI()
     sendCorner.CornerRadius =
         UDim.new(0, 7)
 
-    sendCorner.Parent =
-        SendChatButton
+    sendCorner.Parent = SendChatButton
 
     ChatStatus =
         Instance.new("TextLabel")
@@ -830,7 +870,8 @@ local function createGUI()
         Color3.fromRGB(180, 180, 180)
 
     ChatStatus.TextSize = 10
-    ChatStatus.Font = Enum.Font.Gotham
+    ChatStatus.Font =
+        Enum.Font.Gotham
 
     ChatStatus.TextXAlignment =
         Enum.TextXAlignment.Left
@@ -838,10 +879,9 @@ local function createGUI()
     ChatStatus.TextTruncate =
         Enum.TextTruncate.AtEnd
 
-    ChatStatus.Parent =
-        MainFrame
+    ChatStatus.Parent = MainFrame
 
-    -- DRAG MOBILE
+    -- MOBILE DRAG
 
     local dragging = false
     local dragStart
@@ -853,7 +893,7 @@ local function createGUI()
             if input.UserInputType ==
                 Enum.UserInputType.MouseButton1
                 or input.UserInputType ==
-                Enum.UserInputType.Touch then
+                    Enum.UserInputType.Touch then
 
                 dragging = true
                 dragStart = input.Position
@@ -868,9 +908,11 @@ local function createGUI()
 
                             dragging = false
                         end
+
                     end
                 )
             end
+
         end
     )
 
@@ -884,7 +926,7 @@ local function createGUI()
             if input.UserInputType ~=
                 Enum.UserInputType.MouseMovement
                 and input.UserInputType ~=
-                Enum.UserInputType.Touch then
+                    Enum.UserInputType.Touch then
 
                 return
             end
@@ -896,6 +938,7 @@ local function createGUI()
                 UDim2.new(
                     startPosition.X.Scale,
                     startPosition.X.Offset + delta.X,
+
                     startPosition.Y.Scale,
                     startPosition.Y.Offset + delta.Y
                 )
@@ -910,6 +953,7 @@ local function createGUI()
             else
                 startFarming()
             end
+
         end
     )
 
@@ -932,9 +976,11 @@ local function createGUI()
                     "AUTO ;VIEW OFF",
                     nil
                 )
+
             end
 
             updateGUI()
+
         end
     )
 
@@ -957,6 +1003,7 @@ local function createGUI()
             if sendChatMessage(message) then
                 ChatBox.Text = ""
             end
+
         end
     )
 
@@ -977,6 +1024,7 @@ local function createGUI()
             if sendChatMessage(message) then
                 ChatBox.Text = ""
             end
+
         end
     )
 end
@@ -989,6 +1037,7 @@ updateGUI = function()
 
     if not ToggleButton
         or not StatusLabel then
+
         return
     end
 
@@ -1000,11 +1049,15 @@ updateGUI = function()
             Color3.fromRGB(45, 170, 80)
 
         if State.flyEnabled then
+
             StatusLabel.Text =
                 "FARMING + FLY"
+
         else
+
             StatusLabel.Text =
                 "FARMING"
+
         end
 
         StatusLabel.TextColor3 =
@@ -1021,6 +1074,7 @@ updateGUI = function()
 
         StatusLabel.TextColor3 =
             Color3.fromRGB(255, 80, 80)
+
     end
 
     if AutoViewButton then
@@ -1038,7 +1092,9 @@ updateGUI = function()
 
             AutoViewButton.BackgroundColor3 =
                 Color3.fromRGB(170, 45, 45)
+
         end
+
     end
 end
 
@@ -1056,8 +1112,7 @@ end
 
 startPlayerView = function(player)
 
-    if not S.PlayerViewEnabled
-        or not player then
+    if not player then
         return false
     end
 
@@ -1091,6 +1146,7 @@ startPlayerView = function(player)
 
         CameraState.previousCameraSubject =
             camera.CameraSubject
+
     end
 
     CameraState.active = true
@@ -1134,6 +1190,7 @@ stopPlayerView = function()
 
             camera.CameraSubject =
                 Humanoid
+
         end
     end
 
@@ -1165,12 +1222,12 @@ local function waitPlayerView()
         return
     end
 
-    local start =
+    local started =
         os.clock()
 
     while State.farming
         and CameraState.active
-        and os.clock() - start < duration do
+        and os.clock() - started < duration do
 
         local player =
             CameraState.targetPlayer
@@ -1205,6 +1262,7 @@ local function waitPlayerView()
 
             camera.CameraSubject =
                 humanoid
+
         end
 
         task.wait()
@@ -1245,18 +1303,26 @@ local function bindCharacter(character)
         if object:IsA("BasePart") then
             object.CanCollide = true
         end
+
     end
+
+    -- IMPORTANT:
+    -- FLY BOLEH AKTIF SETELAH RESPAWN.
+    -- TIDAK ADA AUTO SPECTATE.
 
     if State.farming
         and S.FlyEnabled then
 
-        task.defer(function()
+        task.defer(
+            function()
 
-            if State.farming then
-                startFly()
+                if State.farming then
+                    startFly()
+                end
+
             end
+        )
 
-        end)
     end
 end
 
@@ -1307,6 +1373,7 @@ local function setCollision(enabled)
         if object:IsA("BasePart") then
             object.CanCollide = enabled
         end
+
     end
 end
 
@@ -1360,6 +1427,7 @@ stopFly = function()
 
         Humanoid.PlatformStand = false
         Humanoid.AutoRotate = true
+
     end
 
     if HRP then
@@ -1369,6 +1437,7 @@ stopFly = function()
 
         HRP.AssemblyAngularVelocity =
             Vector3.zero
+
     end
 
     updateGUI()
@@ -1383,6 +1452,9 @@ startFly = function()
 
         return
     end
+
+    -- HANYA FLY.
+    -- TIDAK ADA CAMERA / SPECTATE.
 
     stopFly()
 
@@ -1455,7 +1527,6 @@ startFly = function()
             function()
 
                 if not State.farming then
-                    stopFly()
                     return
                 end
 
@@ -1475,6 +1546,7 @@ startFly = function()
 
                 HRP.AssemblyAngularVelocity =
                     Vector3.zero
+
             end
         )
 
@@ -1502,7 +1574,9 @@ end
 local function smoothTween(position)
 
     if not HRP
+        or not HRP.Parent
         or not State.farming then
+
         return false
     end
 
@@ -1533,10 +1607,12 @@ local function smoothTween(position)
     currentTween =
         TweenService:Create(
             HRP,
+
             TweenInfo.new(
                 duration,
                 Enum.EasingStyle.Linear
             ),
+
             {
                 CFrame =
                     CFrame.new(position)
@@ -1614,6 +1690,7 @@ local function getTaskText()
 
     if not taskLabel:IsA("TextLabel")
         and not taskLabel:IsA("TextButton") then
+
         return nil
     end
 
@@ -1670,6 +1747,7 @@ local function getPhotoTargetText(taskText)
                 return target
             end
         end
+
     end
 
     return nil
@@ -1697,7 +1775,7 @@ local function getPlayerByText(targetText)
         return nil
     end
 
-    -- USERNAME
+    -- EXACT USERNAME
     for _, player in ipairs(
         Players:GetPlayers()
     ) do
@@ -1709,7 +1787,7 @@ local function getPlayerByText(targetText)
         end
     end
 
-    -- DISPLAY NAME
+    -- EXACT DISPLAY NAME
     for _, player in ipairs(
         Players:GetPlayers()
     ) do
@@ -1741,6 +1819,7 @@ local function getPlayerByText(targetText)
 
                 return player
             end
+
         end
     end
 
@@ -1766,7 +1845,7 @@ local function findPlayerByInfo(targetText)
         return nil
     end
 
-    -- FIRST: ACTUAL PLAYERS
+    -- FIRST: CHARACTER INFO
     for _, player in ipairs(
         Players:GetPlayers()
     ) do
@@ -1816,7 +1895,7 @@ local function findPlayerByInfo(targetText)
         end
     end
 
-    -- DIRECT PLAYER FALLBACK
+    -- FALLBACK
     local direct =
         getPlayerByText(
             target
@@ -1945,9 +2024,10 @@ end
 
 local function isRejectedTask(taskText)
 
-    return resolveArea(
-        taskText
-    ) == "Music Room"
+    return
+        resolveArea(
+            taskText
+        ) == "Music Room"
 end
 
 --==================================================
@@ -2016,6 +2096,7 @@ local function findLocation(taskText)
 
                         scoreBest = score
                         best = object
+
                     end
                 end
             end
@@ -2047,6 +2128,7 @@ local function findLocation(taskText)
 
                             scoreBest = score
                             best = object
+
                         end
                     end
                 end
@@ -2067,29 +2149,47 @@ local function stopCurrentJob()
         return false
     end
 
-    return pcall(function()
+    return pcall(
+        function()
 
-        photoJobSubmit:InvokeServer(
-            "Stop"
-        )
+            photoJobSubmit:InvokeServer(
+                "Stop"
+            )
 
-    end)
+        end
+    )
 end
 
 local function startNewJob()
 
     if not photoJobSubmit
         or not State.farming then
+
         return false
     end
 
-    return pcall(function()
+    -- COOLDOWN SUPAYA TIDAK SPAM START
+    local now =
+        os.clock()
 
-        photoJobSubmit:InvokeServer(
-            "Start"
-        )
+    if now - State.lastStartRequest
+        < S.StartCooldown then
 
-    end)
+        return false
+    end
+
+    State.lastStartRequest =
+        now
+
+    return pcall(
+        function()
+
+            photoJobSubmit:InvokeServer(
+                "Start"
+            )
+
+        end
+    )
 end
 
 local function waitForNewAssignment()
@@ -2125,74 +2225,142 @@ local function waitForNewAssignment()
 end
 
 --==================================================
+-- WAIT PHOTO RESULT
+--==================================================
+
+local function waitForPhotoResult(previousTask)
+
+    local timeout =
+        math.max(
+            0.05,
+            tonumber(
+                S.PhotoConfirmTimeout
+            ) or 0.20
+        )
+
+    local deadline =
+        os.clock() + timeout
+
+    while State.farming
+        and os.clock() < deadline do
+
+        local currentTask =
+            getTaskText()
+
+        if currentTask
+            and currentTask ~= ""
+            and currentTask ~= previousTask then
+
+            return true
+        end
+
+        task.wait(0.01)
+    end
+
+    return false
+end
+
+--==================================================
 -- FAST PHOTO
 --==================================================
 
-local function takePhoto(targetPosition)
+local PhotoBuffer
+
+local function createPhotoBuffer()
+
+    local ok, result =
+        pcall(
+            function()
+
+                local data =
+                    buffer.create(7)
+
+                buffer.writeu8(
+                    data,
+                    0,
+                    1
+                )
+
+                buffer.writeu8(
+                    data,
+                    1,
+                    4
+                )
+
+                buffer.writeu8(
+                    data,
+                    2,
+                    0
+                )
+
+                buffer.writeu8(
+                    data,
+                    3,
+                    1
+                )
+
+                buffer.writeu8(
+                    data,
+                    4,
+                    1
+                )
+
+                buffer.writeu8(
+                    data,
+                    5,
+                    42
+                )
+
+                buffer.writeu8(
+                    data,
+                    6,
+                    24
+                )
+
+                return data
+            end
+        )
+
+    if ok then
+        return result
+    end
+
+    return nil
+end
+
+PhotoBuffer =
+    createPhotoBuffer()
+
+local function takePhoto(
+    targetPosition,
+    previousTask
+)
 
     if not State.farming
         or not phoneScreenPush
         or not photoJobSubmit
-        or not HRP then
+        or not HRP
+        or not HRP.Parent then
 
         return false
     end
 
-    -- PASTIKAN POSISI TERBARU
-    local currentPosition =
-        HRP.Position
+    if not PhotoBuffer then
+
+        PhotoBuffer =
+            createPhotoBuffer()
+
+        if not PhotoBuffer then
+            return false
+        end
+    end
 
     local lookAt =
         targetPosition
         or (
-            currentPosition
+            HRP.Position
             + HRP.CFrame.LookVector * 10
         )
-
-    local bufferData =
-        buffer.create(7)
-
-    buffer.writeu8(
-        bufferData,
-        0,
-        1
-    )
-
-    buffer.writeu8(
-        bufferData,
-        1,
-        4
-    )
-
-    buffer.writeu8(
-        bufferData,
-        2,
-        0
-    )
-
-    buffer.writeu8(
-        bufferData,
-        3,
-        1
-    )
-
-    buffer.writeu8(
-        bufferData,
-        4,
-        1
-    )
-
-    buffer.writeu8(
-        bufferData,
-        5,
-        42
-    )
-
-    buffer.writeu8(
-        bufferData,
-        6,
-        24
-    )
 
     for attempt = 1,
         S.PhotoRetryCount do
@@ -2201,16 +2369,19 @@ local function takePhoto(targetPosition)
             return false
         end
 
+        State.photoAttempts += 1
+
+        -- SEND PHONE DATA
         local pushOK =
             pcall(
                 phoneScreenPush.FireServer,
                 phoneScreenPush,
-                bufferData
+                PhotoBuffer
             )
 
         if pushOK then
 
-            -- REFRESH POSISI SETIAP ATTEMPT
+            -- REFRESH POSITION
             local photoPosition =
                 HRP.Position
 
@@ -2220,7 +2391,8 @@ local function takePhoto(targetPosition)
                     lookAt
                 )
 
-            local submitOK =
+            local invokeOK,
+                serverResult =
                 pcall(
                     photoJobSubmit.InvokeServer,
                     photoJobSubmit,
@@ -2228,8 +2400,34 @@ local function takePhoto(targetPosition)
                     photoCFrame
                 )
 
-            if submitOK then
-                return true
+            if invokeOK then
+
+                -- SERVER BOOLEAN TRUE
+                if serverResult == true then
+                    return true
+                end
+
+                -- SERVER RETURN NON-FALSE
+                -- + CHECK TASK CHANGE
+                if serverResult ~= false then
+
+                    if waitForPhotoResult(
+                        previousTask
+                    ) then
+
+                        return true
+                    end
+
+                end
+
+                -- EVEN IF REMOTE RETURNS NIL,
+                -- CHECK WHETHER TASK CHANGED
+                if waitForPhotoResult(
+                    previousTask
+                ) then
+
+                    return true
+                end
             end
         end
 
@@ -2246,50 +2444,211 @@ local function takePhoto(targetPosition)
 end
 
 --==================================================
--- PLAYER TELEPORT
+-- TELEPORT PLAYER - STABLE
 --==================================================
 
 local function teleportToPlayer(
-    targetHRP
+    targetPlayer
 )
 
     if not HRP
-        or not targetHRP then
+        or not HRP.Parent
+        or not targetPlayer
+        or not targetPlayer.Parent then
+
         return false
     end
 
+    local character =
+        targetPlayer.Character
+
+    if not character then
+        return false
+    end
+
+    local targetHRP =
+        character:FindFirstChild(
+            "HumanoidRootPart"
+        )
+
+    if not targetHRP then
+        return false
+    end
+
+    -- REFRESH TARGET SETIAP TELEPORT
     local targetPosition =
         targetHRP.Position
 
-    local look =
+    local targetLook =
         targetHRP.CFrame.LookVector
 
-    -- JARAK FOTO
-    local position =
+    -- POSISI FOTO:
+    -- 2 STUD DI BELAKANG TARGET
+    -- SEDIKIT NAIK
+    local destination =
         targetPosition
-        - look * 2
+        - targetLook * 2
         + Vector3.new(
             0,
             0.15,
             0
         )
 
-    setCollision(false)
-
-    HRP.CFrame =
+    local destinationCFrame =
         CFrame.lookAt(
-            position,
+            destination,
             targetPosition
         )
 
-    -- UPDATE PHYSICS
-    HRP.AssemblyLinearVelocity =
-        Vector3.zero
+    setCollision(false)
 
-    HRP.AssemblyAngularVelocity =
-        Vector3.zero
+    -- MATIKAN VELOCITY AGAR FLY
+    -- TIDAK MELAWAN TELEPORT
+    if HRP then
 
-    return true
+        HRP.AssemblyLinearVelocity =
+            Vector3.zero
+
+        HRP.AssemblyAngularVelocity =
+            Vector3.zero
+    end
+
+    for attempt = 1,
+        S.TeleportRetryCount do
+
+        if not State.farming then
+
+            setCollision(true)
+            return false
+
+        end
+
+        State.teleportAttempts += 1
+
+        -- TARGET BISA BERGERAK,
+        -- JADI UPDATE POSISI LAGI
+        if targetPlayer.Character then
+
+            local freshHRP =
+                targetPlayer.Character:
+                FindFirstChild(
+                    "HumanoidRootPart"
+                )
+
+            if freshHRP then
+
+                targetHRP =
+                    freshHRP
+
+                targetPosition =
+                    targetHRP.Position
+
+                targetLook =
+                    targetHRP.CFrame.LookVector
+
+                destination =
+                    targetPosition
+                    - targetLook * 2
+                    + Vector3.new(
+                        0,
+                        0.15,
+                        0
+                    )
+
+                destinationCFrame =
+                    CFrame.lookAt(
+                        destination,
+                        targetPosition
+                    )
+            end
+        end
+
+        -- METHOD 1
+        pcall(
+            function()
+
+                if Character
+                    and Character.Parent then
+
+                    Character:PivotTo(
+                        destinationCFrame
+                    )
+
+                end
+
+            end
+        )
+
+        -- METHOD 2 FALLBACK
+        if HRP
+            and HRP.Parent then
+
+            pcall(
+                function()
+
+                    HRP.CFrame =
+                        destinationCFrame
+
+                end
+            )
+
+            HRP.AssemblyLinearVelocity =
+                Vector3.zero
+
+            HRP.AssemblyAngularVelocity =
+                Vector3.zero
+        end
+
+        if S.PlayerTeleportDelay > 0 then
+
+            task.wait(
+                S.PlayerTeleportDelay
+            )
+        else
+
+            task.wait()
+        end
+
+        -- VERIFY
+        if HRP
+            and HRP.Parent then
+
+            local distance =
+                (
+                    HRP.Position
+                    - destination
+                ).Magnitude
+
+            if distance <=
+                S.TeleportDistanceTolerance then
+
+                -- FORCE FINAL LOOK
+                pcall(
+                    function()
+
+                        HRP.CFrame =
+                            CFrame.lookAt(
+                                HRP.Position,
+                                targetPosition
+                            )
+
+                    end
+                )
+
+                setCollision(true)
+
+                return true
+            end
+        end
+
+        task.wait(
+            S.TeleportRetryDelay
+        )
+    end
+
+    setCollision(true)
+
+    return false
 end
 
 --==================================================
@@ -2300,6 +2659,7 @@ local function processPlayerTask(
     taskText
 )
 
+    -- FIND PLAYER
     local target =
         findPlayerTarget(
             taskText
@@ -2318,7 +2678,16 @@ local function processPlayerTask(
     State.targetUsername =
         player.Name
 
-    -- ;VIEW HANYA SEKALI PER PLAYER
+    --================================================
+    -- AUTO ;VIEW CHAT SAJA
+    --================================================
+    --
+    -- TIDAK ADA startPlayerView()
+    -- TIDAK ADA waitPlayerView()
+    --
+    -- Jadi FARMING TIDAK AKAN SPECTATE.
+    --================================================
+
     if S.AutoViewCommandEnabled then
 
         sendViewCommand(
@@ -2333,23 +2702,31 @@ local function processPlayerTask(
         end
     end
 
-    -- CAMERA VIEW SINGKAT
-    if S.PlayerViewEnabled then
-
-        startPlayerView(player)
-
-        waitPlayerView()
-    end
-
     if not State.farming then
         return false
     end
 
-    -- REFRESH CHARACTER
+    -- REFRESH PLAYER SEBELUM TELEPORT
+    local successTeleport =
+        teleportToPlayer(
+            player
+        )
+
+    if not successTeleport then
+
+        setCollision(true)
+        stopPlayerView()
+
+        return false
+    end
+
+    -- TARGET TERBARU
     local character =
         player.Character
 
     if not character then
+
+        setCollision(true)
         return false
     end
 
@@ -2359,23 +2736,22 @@ local function processPlayerTask(
         )
 
     if not targetHRP then
-        return false
-    end
 
-    -- TELEPORT SEKALI
-    if not teleportToPlayer(
-        targetHRP
-    ) then
+        setCollision(true)
         return false
     end
 
     -- FOTO SEGERA
     local success =
         takePhoto(
-            targetHRP.Position
+            targetHRP.Position,
+            taskText
         )
 
     setCollision(true)
+
+    -- PENTING:
+    -- TIDAK ADA AUTO SPECTATE.
     stopPlayerView()
 
     if success then
@@ -2426,10 +2802,10 @@ local function processAreaTask(
         return false
     end
 
-    -- FOTO LANGSUNG
     local success =
         takePhoto(
-            position
+            position,
+            taskText
         )
 
     setCollision(true)
@@ -2451,6 +2827,36 @@ local function processAreaTask(
 end
 
 --==================================================
+-- IS PLAYER TASK
+--==================================================
+
+local function isPlayerPhotoTask(
+    taskText
+)
+
+    local target =
+        getPhotoTargetText(
+            taskText
+        )
+
+    if not target then
+        return false
+    end
+
+    -- AREA PHOTO BUKAN PLAYER
+    if resolveArea(
+        taskText
+    ) then
+
+        return false
+    end
+
+    return
+        getPlayerByText(target) ~= nil
+        or findPlayerByInfo(target) ~= nil
+end
+
+--==================================================
 -- INVALID / REROLL
 --==================================================
 
@@ -2468,7 +2874,8 @@ local function restartUntilValidTask()
     cancelTween()
     setCollision(true)
 
-    for _ = 1, S.MaxAttempts or 20 do
+    for _ = 1,
+        20 do
 
         if not State.farming then
             break
@@ -2495,6 +2902,7 @@ local function restartUntilValidTask()
                 taskText
             ) then
 
+                State.restartCount += 1
                 continue
             end
 
@@ -2535,34 +2943,6 @@ local function restartUntilValidTask()
 end
 
 --==================================================
--- IS PLAYER TASK
---==================================================
-
-local function isPlayerPhotoTask(
-    taskText
-)
-
-    local target =
-        getPhotoTargetText(
-            taskText
-        )
-
-    if not target then
-        return false
-    end
-
-    if resolveArea(
-        taskText
-    ) then
-        return false
-    end
-
-    return
-        getPlayerByText(target) ~= nil
-        or findPlayerByInfo(target) ~= nil
-end
-
---==================================================
 -- PROCESS TASK
 --==================================================
 
@@ -2581,17 +2961,28 @@ local function processTask()
     if not taskText
         or taskText == "" then
 
+        -- NO ASSIGNMENT:
+        -- START DENGAN COOLDOWN
+        startNewJob()
+
         return
     end
 
     local lower =
         taskText:lower()
 
+    -- WAITING
     if lower:find(
         "waiting for assignment",
         1,
         true
     ) then
+
+        -- START DIPINDAHKAN KE SINI.
+        -- JADI TOMBOL FARM ON TIDAK
+        -- LANGSUNG MEMANGGIL START.
+        startNewJob()
+
         return
     end
 
@@ -2615,11 +3006,14 @@ local function processTask()
 
         if State.lastTask ==
             taskText then
+
             return
         end
 
         State.processing = true
-        State.lastTask = taskText
+        State.lastTask =
+            taskText
+
         State.taskCount += 1
 
         local success =
@@ -2634,6 +3028,15 @@ local function processTask()
             State.stopReason =
                 "Area photo failed"
 
+            -- CLEAR TASK SUPAYA BISA RETRY
+            State.lastTask = ""
+
+            task.wait(
+                S.PhotoRetryDelay
+            )
+
+            -- HANYA REROLL JIKA
+            -- TASK TIDAK BISA DIPROSES
             restartUntilValidTask()
         end
 
@@ -2647,11 +3050,14 @@ local function processTask()
 
         if State.lastTask ==
             taskText then
+
             return
         end
 
         State.processing = true
-        State.lastTask = taskText
+        State.lastTask =
+            taskText
+
         State.taskCount += 1
 
         local success =
@@ -2666,6 +3072,12 @@ local function processTask()
             State.stopReason =
                 "Player photo failed"
 
+            State.lastTask = ""
+
+            task.wait(
+                S.PhotoRetryDelay
+            )
+
             restartUntilValidTask()
         end
 
@@ -2674,7 +3086,8 @@ local function processTask()
 
     -- INVALID
     State.stopReason =
-        "Invalid task: " .. tostring(taskText)
+        "Invalid task: "
+        .. tostring(taskText)
 
     restartUntilValidTask()
 end
@@ -2742,21 +3155,31 @@ startFarming = function()
     State.targetPlayer = ""
     State.targetUsername = ""
 
-    -- PENTING:
-    -- TIDAK MENGIRIM VIEW SAAT FARMING ON
-    -- TIDAK MENJALANKAN PROSES TAMBAHAN
-    -- LANGSUNG SIAP FARM
+    State.lastStartRequest = 0
+    State.photoAttempts = 0
+    State.teleportAttempts = 0
+
+    -- RESET CAMERA
+    -- TIDAK ADA AUTO SPECTATE
+    stopPlayerView()
 
     setCollision(true)
 
+    -- FLY SAJA
     if S.FlyEnabled then
         startFly()
     end
 
     updateGUI()
 
-    -- START JOB SAJA
-    startNewJob()
+    --================================================
+    -- TIDAK ADA startNewJob() DI SINI
+    --================================================
+    --
+    -- Farming ON hanya mengaktifkan loop.
+    -- Kalau assignment kosong/waiting,
+    -- processTask() yang akan meminta Start.
+    --================================================
 
     task.spawn(
         farmLoop
@@ -2779,12 +3202,13 @@ stopFarmingFromGUI = function()
         return
     end
 
+    State.farming = false
+
     cancelTween()
     stopPlayerView()
     stopFly()
     stopCurrentJob()
 
-    State.farming = false
     State.processing = false
     State.tweening = false
     State.restarting = false
@@ -2803,7 +3227,7 @@ stopFarmingFromGUI = function()
 end
 
 --==================================================
--- CHARACTER
+-- CHARACTER BIND
 --==================================================
 
 if LocalPlayer.Character then
@@ -2821,6 +3245,7 @@ LocalPlayer.CharacterAdded:Connect(
         bindCharacter(
             character
         )
+
     end
 )
 
@@ -2835,6 +3260,9 @@ Workspace:GetPropertyChangedSignal(
 
         Camera =
             Workspace.CurrentCamera
+
+        -- HANYA UNTUK MANUAL VIEW.
+        -- FARMING TIDAK MEMAKAI SPECTATE.
 
         if CameraState.active
             and CameraState.targetPlayer then
@@ -2852,7 +3280,8 @@ Workspace:GetPropertyChangedSignal(
                         "Humanoid"
                     )
 
-                if humanoid then
+                if humanoid
+                    and Camera then
 
                     Camera.CameraType =
                         Enum.CameraType.Custom
@@ -2909,6 +3338,7 @@ task.spawn(
             and S.AutoStart then
 
             startFarming()
+
         else
 
             State.farming = false
@@ -2926,11 +3356,15 @@ task.spawn(
 --==================================================
 
 _G.StartFarming = function()
+
     startFarming()
+
 end
 
 _G.StopFarming = function()
+
     stopFarmingFromGUI()
+
 end
 
 --==================================================
@@ -2942,10 +3376,13 @@ _G.StartFly = function()
     if State.farming then
         startFly()
     end
+
 end
 
 _G.StopFly = function()
+
     stopFly()
+
 end
 
 _G.SetFly = function(enabled)
@@ -2957,19 +3394,25 @@ _G.SetFly = function(enabled)
         and State.farming then
 
         startFly()
+
     else
+
         stopFly()
+
     end
 
     updateGUI()
+
 end
 
 _G.GetFly = function()
+
     return State.flyEnabled
+
 end
 
 --==================================================
--- PLAYER VIEW
+-- PLAYER VIEW - MANUAL ONLY
 --==================================================
 
 _G.SetPlayerView = function(enabled)
@@ -2981,249 +3424,329 @@ _G.SetPlayerView = function(enabled)
 
         stopPlayerView()
 
-    elseif State.farming
-        and State.targetUsername ~= "" then
-
-        local player =
-            Players:FindFirstChild(
-                State.targetUsername
-            )
-
-        if player then
-            startPlayerView(player)
-        end
     end
+
+    return S.PlayerViewEnabled
 end
 
 _G.GetPlayerViewDuration =
-    function()
-        return S.PlayerViewDuration
-    end
+function()
+
+    return S.PlayerViewDuration
+
+end
 
 _G.SetPlayerViewDuration =
-    function(seconds)
+function(seconds)
 
-        seconds =
-            tonumber(seconds)
+    seconds =
+        tonumber(seconds)
 
-        if not seconds then
-            return false
-        end
-
-        S.PlayerViewDuration =
-            math.max(
-                0,
-                seconds
-            )
-
-        return true
+    if not seconds then
+        return false
     end
+
+    S.PlayerViewDuration =
+        math.max(
+            0,
+            seconds
+        )
+
+    return true
+end
 
 _G.GetPlayerView =
-    function()
-        return S.PlayerViewEnabled
-    end
+function()
+
+    return S.PlayerViewEnabled
+
+end
 
 --==================================================
--- AUTO VIEW
+-- AUTO VIEW CHAT
 --==================================================
 
 _G.SetAutoView =
-    function(enabled)
+function(enabled)
 
-        S.AutoViewCommandEnabled =
-            enabled == true
+    S.AutoViewCommandEnabled =
+        enabled == true
 
-        updateGUI()
+    updateGUI()
 
-        return S.AutoViewCommandEnabled
-    end
+    return S.AutoViewCommandEnabled
+end
 
 _G.GetAutoView =
-    function()
+function()
 
-        return S.AutoViewCommandEnabled
-    end
+    return S.AutoViewCommandEnabled
+
+end
 
 --==================================================
 -- VIEW MEMORY
 --==================================================
 
 _G.GetLastViewTarget =
-    function()
+function()
 
-        return State.lastViewTarget
-    end
+    return State.lastViewTarget
+
+end
 
 _G.ClearViewMemory =
-    function()
+function()
 
-        State.lastViewTarget = ""
-        State.lastViewCommand = ""
+    State.lastViewTarget = ""
+    State.lastViewCommand = ""
 
-        return true
-    end
+    return true
+
+end
 
 --==================================================
 -- MANUAL VIEW COMMAND
 --==================================================
 
 _G.SendViewCommand =
-    function(playerName)
+function(playerName)
 
-        playerName =
-            normalizePlayerName(
-                playerName
-            )
+    playerName =
+        normalizePlayerName(
+            playerName
+        )
 
-        if playerName == "" then
-            return false
-        end
-
-        local command =
-            ";view " .. playerName
-
-        local success =
-            sendChatMessage(
-                command
-            )
-
-        if success then
-
-            State.lastViewTarget =
-                playerName:lower()
-
-            State.lastViewCommand =
-                command
-        end
-
-        return success
+    if playerName == "" then
+        return false
     end
+
+    local command =
+        ";view " .. playerName
+
+    local success =
+        sendChatMessage(
+            command
+        )
+
+    if success then
+
+        State.lastViewTarget =
+            playerName:lower()
+
+        State.lastViewCommand =
+            command
+
+    end
+
+    return success
+end
 
 --==================================================
 -- MANUAL CHAT
 --==================================================
 
 _G.SendChat =
-    function(message)
+function(message)
 
-        return sendChatMessage(
-            message
-        )
-    end
+    return sendChatMessage(
+        message
+    )
+
+end
 
 --==================================================
 -- MANUAL VIEW PLAYER
 --==================================================
 
 _G.ViewPlayer =
-    function(playerName)
+function(playerName)
 
-        local player =
-            getPlayerByText(
-                playerName
-            )
-
-        if not player then
-            return false
-        end
-
-        return startPlayerView(
-            player
+    local player =
+        getPlayerByText(
+            playerName
         )
+
+    if not player then
+        return false
     end
+
+    return startPlayerView(
+        player
+    )
+end
 
 _G.UnviewPlayer =
-    function()
-        stopPlayerView()
-    end
+function()
+
+    stopPlayerView()
+
+end
 
 --==================================================
 -- STATUS
 --==================================================
 
 _G.GetStatus =
-    function()
+function()
 
-        return {
-            farming =
-                State.farming,
+    return {
 
-            processing =
-                State.processing,
+        farming =
+            State.farming,
 
-            tweening =
-                State.tweening,
+        processing =
+            State.processing,
 
-            restarting =
-                State.restarting,
+        tweening =
+            State.tweening,
 
-            flyEnabled =
-                State.flyEnabled,
+        restarting =
+            State.restarting,
 
-            playerView =
-                CameraState.active,
+        flyEnabled =
+            State.flyEnabled,
 
-            playerViewEnabled =
-                S.PlayerViewEnabled,
+        -- Manual camera only
+        playerView =
+            CameraState.active,
 
-            playerViewDuration =
-                S.PlayerViewDuration,
+        playerViewEnabled =
+            S.PlayerViewEnabled,
 
-            autoView =
-                S.AutoViewCommandEnabled,
+        playerViewDuration =
+            S.PlayerViewDuration,
 
-            lastViewTarget =
-                State.lastViewTarget,
+        autoView =
+            S.AutoViewCommandEnabled,
 
-            lastViewCommand =
-                State.lastViewCommand,
+        lastViewTarget =
+            State.lastViewTarget,
 
-            lastChatMessage =
-                State.lastChatMessage,
+        lastViewCommand =
+            State.lastViewCommand,
 
-            lastTask =
-                State.lastTask,
+        lastChatMessage =
+            State.lastChatMessage,
 
-            taskCount =
-                State.taskCount,
+        lastTask =
+            State.lastTask,
 
-            restartCount =
-                State.restartCount,
+        taskCount =
+            State.taskCount,
 
-            stopReason =
-                State.stopReason,
+        restartCount =
+            State.restartCount,
 
-            targetPlayer =
-                State.targetPlayer,
+        photoAttempts =
+            State.photoAttempts,
 
-            targetUsername =
-                State.targetUsername
-        }
-    end
+        teleportAttempts =
+            State.teleportAttempts,
+
+        stopReason =
+            State.stopReason,
+
+        targetPlayer =
+            State.targetPlayer,
+
+        targetUsername =
+            State.targetUsername
+    }
+end
 
 --==================================================
 -- DEBUG
 --==================================================
 
 _G.PhotoFarmStatus =
-    function()
+function()
 
-        print("========== PHOTO FARM ==========")
-        print("Farming:", State.farming)
-        print("Processing:", State.processing)
-        print("Restarting:", State.restarting)
-        print("Fly:", State.flyEnabled)
-        print("Player View:", CameraState.active)
-        print("View Enabled:", S.PlayerViewEnabled)
-        print("View Duration:", S.PlayerViewDuration)
-        print("Auto View:", S.AutoViewCommandEnabled)
-        print("Last View:", State.lastViewTarget)
-        print("Last Task:", State.lastTask)
-        print("Tasks:", State.taskCount)
-        print("Restarts:", State.restartCount)
-        print("Reason:", State.stopReason)
-        print("Target:", State.targetPlayer)
-        print("Username:", State.targetUsername)
-        print("================================")
-    end
+    print(
+        "========== PHOTO FARM =========="
+    )
+
+    print(
+        "Farming:",
+        State.farming
+    )
+
+    print(
+        "Processing:",
+        State.processing
+    )
+
+    print(
+        "Restarting:",
+        State.restarting
+    )
+
+    print(
+        "Fly:",
+        State.flyEnabled
+    )
+
+    print(
+        "Manual View:",
+        CameraState.active
+    )
+
+    print(
+        "Player View Setting:",
+        S.PlayerViewEnabled
+    )
+
+    print(
+        "Auto ;VIEW:",
+        S.AutoViewCommandEnabled
+    )
+
+    print(
+        "Last View:",
+        State.lastViewTarget
+    )
+
+    print(
+        "Last Task:",
+        State.lastTask
+    )
+
+    print(
+        "Tasks:",
+        State.taskCount
+    )
+
+    print(
+        "Restarts:",
+        State.restartCount
+    )
+
+    print(
+        "Photo Attempts:",
+        State.photoAttempts
+    )
+
+    print(
+        "Teleport Attempts:",
+        State.teleportAttempts
+    )
+
+    print(
+        "Reason:",
+        State.stopReason
+    )
+
+    print(
+        "Target:",
+        State.targetPlayer
+    )
+
+    print(
+        "Username:",
+        State.targetUsername
+    )
+
+    print(
+        "================================"
+    )
+end
