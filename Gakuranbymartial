@@ -130,11 +130,17 @@ TeleportRetryDelay = 0.005,
 
 TeleportDistanceTolerance = 3.0,
 
-AreaTeleportRetryCount = 6,
+AreaTeleportRetryCount = 8,
 
-AreaTeleportTolerance = 1.0,
+AreaTeleportTolerance = 0.35,
 
-AreaTeleportDelay = 0.005,      
+AreaTeleportDelay = 0.01,
+
+RooftopTeleportRetryCount = 10,
+
+RooftopTeleportTolerance = 0.25,
+
+RooftopPhotoRetryCount = 3,      
 
 PlayerSafeDistance = 3.5,      
 
@@ -2327,17 +2333,11 @@ end
 
 if object:IsA("Model") then
 
--- Prefer the model bounding-box center.
--- Some map models have their pivot away from the actual photo area.
-local ok, boxCFrame = pcall(
-    function()
-        local cframe, _ = object:GetBoundingBox()
-        return cframe
-    end
-)
-
-if ok and boxCFrame then
-    return boxCFrame.Position
+-- Prefer an explicit PrimaryPart/pivot.
+-- Bounding-box center can be far from the actual photo point.
+local primary = object.PrimaryPart
+if primary and primary:IsA("BasePart") then
+    return primary.Position
 end
 
 local okPivot, pivot = pcall(
@@ -2401,6 +2401,60 @@ return nil
 end
 
 --==================================================
+-- ROOFTOP EXACT LOCATION
+--==================================================
+
+local function findRooftopExactLocation()
+    local exact = nil
+    local bestScore = -math.huge
+
+    -- Explicit landmark/name matches are preferred.
+    for _, object in ipairs(Workspace:GetDescendants()) do
+        local objectName = tostring(object.Name):lower()
+        local landmark = getLandmarkValue(object)
+        local position = getObjectPosition(object)
+
+        if position then
+            local score = -math.huge
+
+            if objectName == "rooftop" then
+                score = 100000
+            elseif objectName == "roof" then
+                score = 90000
+            elseif objectName:find("rooftop", 1, true) then
+                score = 80000 + #objectName
+            elseif objectName:find("roof", 1, true) then
+                score = 70000 + #objectName
+            end
+
+            if landmark then
+                if landmark == "rooftop" then
+                    score = math.max(score, 120000)
+                elseif landmark == "roof" then
+                    score = math.max(score, 110000)
+                elseif landmark:find("rooftop", 1, true) then
+                    score = math.max(score, 100000 + #landmark)
+                end
+            end
+
+            -- Prefer actual photo-point parts/attachments over large models.
+            if object:IsA("BasePart") or object:IsA("Attachment") then
+                score += 5000
+            elseif object:IsA("Model") then
+                score += 1000
+            end
+
+            if score > bestScore then
+                bestScore = score
+                exact = position
+            end
+        end
+    end
+
+    return exact
+end
+
+--==================================================
 
 -- FIND LOCATION
 
@@ -2424,6 +2478,14 @@ if not area then
 
 return nil
 
+end
+
+-- Rooftop uses a dedicated exact-point resolver.
+if area == "Rooftop" then
+    local rooftopPosition = findRooftopExactLocation()
+    if rooftopPosition then
+        return rooftopPosition
+    end
 end
 
 local terms = {}
@@ -2960,6 +3022,73 @@ function()
 
 return success
 
+end
+
+--==================================================
+-- RESTART JOB AFTER AREA PHOTO FAILURE
+--==================================================
+
+local function restartJobAfterAreaPhotoFailure(sessionId, failedTask)
+	if not isCurrentSession(sessionId) then
+		return false
+	end
+
+	if State.restarting then
+		return false
+	end
+
+	State.restarting = true
+	State.processing = false
+	State.lastTask = ""
+	cancelTween()
+	stopPlayerView()
+	setCollision(true)
+	zeroVelocity()
+
+	-- Explicit OFF -> ON for a failed area photo.
+	State.lastStartRequest = 0
+	pcall(function()
+		if photoJobSubmit then
+			photoJobSubmit:InvokeServer("Stop")
+		end
+	end)
+
+	task.wait(S.RestartDelay)
+
+	if not isCurrentSession(sessionId) then
+		State.restarting = false
+		return false
+	end
+
+	State.lastStartRequest = 0
+	local started = pcall(function()
+		photoJobSubmit:InvokeServer("Start")
+	end)
+
+	if not started then
+		State.restarting = false
+		return false
+	end
+
+	-- Do not accept the old failed assignment as success.
+	local deadline = os.clock() + 2
+	while isCurrentSession(sessionId) and os.clock() < deadline do
+		local newTask = getTaskText()
+		if newTask and newTask ~= "" then
+			local lower = newTask:lower()
+			if not lower:find("waiting for assignment", 1, true)
+				and newTask ~= failedTask then
+				State.lastTask = ""
+				State.currentPhotoFailure = 0
+				State.restarting = false
+				return true
+			end
+		end
+		task.wait(S.AssignmentWait)
+	end
+
+	State.restarting = false
+	return false
 end
 
 --==================================================
@@ -3839,136 +3968,99 @@ end
 --==================================================
 
 local function processAreaTask(
-
-taskText
-
+	taskText
 )
+	stopPlayerView()
 
-stopPlayerView()
+	local area = resolveArea(taskText)
+	local position = findLocation(taskText)
 
-local position =
+	if not area or not position then
+		return false
+	end
 
-findLocation(
+	local isRooftop = area == "Rooftop"
+	local tolerance = isRooftop
+		and math.max(0.05, tonumber(S.RooftopTeleportTolerance) or 0.25)
+		or math.max(0.1, tonumber(S.AreaTeleportTolerance) or 1.0)
 
-taskText
+	local teleportOK
+	if isRooftop then
+		teleportOK = teleportToAreaExact(position)
+	else
+		teleportOK = teleportToAreaExact(position)
+	end
 
-)
+	if not teleportOK or not State.farming then
+		return false
+	end
 
-if not position then
+	-- Verify exact point immediately before taking the photo.
+	for verifyAttempt = 1, (isRooftop and 3 or 2) do
+		if not State.farming or not HRP or not HRP.Parent then
+			return false
+		end
 
-return false
+		local distance = (HRP.Position - position).Magnitude
+		if distance <= tolerance then
+			break
+		end
 
+		setCollision(false)
+		pcall(function()
+			Character:PivotTo(CFrame.new(position))
+			HRP.CFrame = CFrame.new(position)
+		end)
+		zeroVelocity()
+		setCollision(true)
+
+		if verifyAttempt < 3 then
+			task.wait(S.AreaTeleportDelay)
+		end
+	end
+
+	if not HRP or not HRP.Parent then
+		return false
+	end
+
+	local finalDistance = (HRP.Position - position).Magnitude
+	if finalDistance > tolerance then
+		return false
+	end
+
+	if not State.farming then
+		return false
+	end
+
+	-- Use the exact verified position, not the original search position.
+	local verifiedPosition = HRP.Position
+	local photoRetries = isRooftop
+		and math.max(1, tonumber(S.RooftopPhotoRetryCount) or 3)
+		or S.PhotoRetryCount
+
+	local originalPhotoRetryCount = S.PhotoRetryCount
+	if isRooftop then
+		S.PhotoRetryCount = photoRetries
+	end
+
+	local success = takePhoto(verifiedPosition, taskText)
+
+	S.PhotoRetryCount = originalPhotoRetryCount
+	setCollision(true)
+	zeroVelocity()
+
+	if success then
+		State.lastTask = ""
+		State.processing = false
+		State.currentPhotoFailure = 0
+		task.wait(S.SuccessDelay)
+		return true
+	end
+
+	State.currentPhotoFailure += 1
+	return false
 end
 
--- Use hard teleport + verification for area jobs.
--- This prevents the character from stopping halfway.
-if not teleportToAreaExact(
-    position
-) then
-
-return false
-
-end
-
-if not State.farming then
-
-return false
-
-end
-
--- FINAL POSITION VERIFY
-if not HRP
-or not HRP.Parent then
-
-return false
-
-end
-
-local tolerance =
-    math.max(
-        0.1,
-        tonumber(S.AreaTeleportTolerance) or 1.0
-    )
-
-local distance =
-    (
-        HRP.Position - position
-    ).Magnitude
-
-if distance > tolerance then
-
-setCollision(false)
-
-pcall(
-    function()
-        Character:PivotTo(
-            CFrame.new(position)
-        )
-        HRP.CFrame =
-            CFrame.new(position)
-    end
-)
-
-zeroVelocity()
-
-distance =
-    (
-        HRP.Position - position
-    ).Magnitude
-
-setCollision(true)
-
-if distance > tolerance then
-    return false
-end
-
-end
-
-if not State.farming then
-
-return false
-
-end
-
--- Submit using the actual verified position.
-local verifiedPosition =
-    HRP.Position
-
-local success =
-
-takePhoto(
-
-verifiedPosition,
-
-taskText
-
-)
-
-setCollision(true)
-
-zeroVelocity()
-
-if success then
-
-State.lastTask = ""
-
-State.processing = false
-
-State.currentPhotoFailure = 0
-
-task.wait(
-    S.SuccessDelay
-)
-
-return true
-
-end
-
-State.currentPhotoFailure += 1
-
-return false
-
-end
 --==================================================
 
 -- IS PLAYER PHOTO TASK
@@ -4263,18 +4355,16 @@ if success then
 end      
 
 
--- PHOTO FAIL      
--- TETAP JOB YANG SAMA      
-State.lastTask = ""      
+-- PHOTO FAIL / TELEPORT FAIL
+-- AREA JOB GAGAL: lakukan OFF -> ON agar mendapat job/session baru.
+State.lastTask = ""
 
+restartJobAfterAreaPhotoFailure(
+    State.sessionId,
+    taskText
+)
 
-task.wait(      
-    S.PhotoRetryDelay      
-)      
-
-
-return      
-
+return
 
 
 end
