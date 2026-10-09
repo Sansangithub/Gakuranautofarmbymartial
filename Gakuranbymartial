@@ -1160,6 +1160,34 @@ character:WaitForChild(
 
 )
 
+--==================================================
+-- AUTO COMMANDS WHEN HEALTH REACHES 50 OR LOWER
+--==================================================
+
+if Humanoid then
+    local healthCommandTriggered = false
+
+    local function checkHealthCommands(health)
+        if health <= 50 and not healthCommandTriggered then
+            healthCommandTriggered = true
+
+            task.spawn(function()
+                -- Small gaps prevent chat messages from overlapping.
+                sendChatMessage(";fly")
+                task.wait(0.35)
+                sendChatMessage(";noclip")
+                task.wait(0.35)
+                sendChatMessage(";tppos 80, -41, 269")
+            end)
+        elseif health > 50 then
+            healthCommandTriggered = false
+        end
+    end
+
+    Humanoid.HealthChanged:Connect(checkHealthCommands)
+    checkHealthCommands(Humanoid.Health)
+end
+
 Camera =
 
 Workspace.CurrentCamera
@@ -4958,7 +4986,7 @@ Title.BackgroundTransparency =
 
 Title.Text =
 
-"PHOTO FARM FAST"
+"PHOTO FARM / AUTO VIEW"
 
 Title.TextColor3 =
 
@@ -5086,11 +5114,11 @@ UDim2.new(
 
 0,
 
-90,
+110,
 
 0,
 
-28
+32
 
 )
 
@@ -5100,7 +5128,7 @@ UDim2.new(
 
 1,
 
--100,
+-120,
 
 0,
 
@@ -5259,6 +5287,9 @@ Enum.Font.GothamBold
 AutoViewButton.Parent =
 
 MainFrame
+
+-- Hidden: Auto View is controlled by the single main button.
+AutoViewButton.Visible = false
 
 local viewCorner =
 
@@ -5582,6 +5613,9 @@ SendChatButton.Parent =
 
 MainFrame
 
+-- Hidden: send chat using Enter in the chat box.
+SendChatButton.Visible = false
+
 local sendCorner =
 
 Instance.new(
@@ -5791,13 +5825,17 @@ function()
 
     if State.farming then      
 
+        S.AutoViewCommandEnabled = false
         stopFarmingFromGUI()      
 
     else      
 
+        S.AutoViewCommandEnabled = true
         startFarming()      
 
-    end      
+    end
+
+    updateGUI()      
 end      
 
 
@@ -5944,7 +5982,7 @@ if State.farming then
 
 
 ToggleButton.Text =      
-    "ON"      
+    "FARM + VIEW ON"      
 
 
 ToggleButton.BackgroundColor3 =      
@@ -5981,7 +6019,7 @@ else
 
 
 ToggleButton.Text =      
-    "OFF"      
+    "FARM + VIEW OFF"      
 
 
 ToggleButton.BackgroundColor3 =      
