@@ -3,7 +3,7 @@
 --// MOBILE CHAT + AUTO ;VIEW COMMAND
 --// NO AUTO SPECTATE WHILE FARMING
 --// WHITELIST AREA ONLY
---// MERGED: AUTO MACRO (CUSTOM YEN TARGET + ALT + BLINK_RELIABLE_REMOTE + KEYBIND + AUTO SAVE/LOAD) + HOP 1-2P SERVER
+--// MERGED: AUTO MACRO (YEN THRESHOLD TRIGGER + YENAPPACTIVITYSTATE + CUSTOM YEN TARGET + KEYBIND + SAVE/LOAD) + HOP 1-2P SERVER
 
 --==================================================
 -- SERVICES
@@ -67,6 +67,14 @@ local Settings = {
 	}
 }
 local S = Settings.Farming
+
+local YEN_VALUE_NAMES = {
+	"yen", "yens", "money", "cash", "balance", "wallet", "funds", "points"
+}
+
+local YEN_APP_BYTES = {
+	40, 181, 47, 253, 96, 141, 24, 93, 28, 0, 10, 75, 228, 11, 35, 32, 111, 11, 59, 3, 234, 208, 184, 94, 88, 142, 246, 181, 80, 252, 129, 184, 143, 67, 37, 156, 100, 193, 50, 137, 20, 201, 233, 250, 87, 1, 32, 4, 96, 193, 216, 0, 162, 0, 163, 0, 198, 112, 209, 68, 231, 156, 92, 103, 247, 42, 25, 82, 172, 134, 201, 109, 165, 31, 249, 55, 41, 38, 20, 15, 17, 197, 196, 89, 16, 10, 143, 198, 67, 2, 162, 64, 119, 184, 32, 142, 126, 8, 68, 129, 144, 40, 10, 186, 130, 89, 10, 234, 57, 40, 64, 89, 94, 16, 137, 46, 176, 20, 64, 252, 35, 162, 193, 72, 64, 50, 44, 136, 5, 135, 126, 64, 188, 3, 195, 193, 59, 180, 1, 162, 32, 124, 254, 154, 231, 171, 56, 90, 90, 202, 182, 234, 106, 119, 232, 166, 235, 246, 112, 65, 100, 65, 212, 1, 9, 199, 99, 96, 52, 124, 129, 187, 51, 11, 242, 104, 68, 60, 56, 8, 32, 10, 0, 11, 199, 75, 116, 195, 2, 178, 32, 239, 142, 136, 135, 6, 68, 65, 26, 140, 54, 64, 22, 228, 45, 72, 56, 32, 138, 9, 178, 86, 5, 6, 131, 44, 200, 132, 118, 64, 20, 136, 76, 150, 163, 202, 165, 44, 136, 58, 224, 120, 136, 7, 36, 195, 130, 60, 28, 109, 193, 241, 143, 70, 196, 3, 1, 146, 33, 194, 130, 72, 60, 24, 24, 24, 15, 23, 64, 20, 88, 184, 148, 92, 144, 247, 70, 55, 244, 0, 146, 33, 137, 139, 74, 61, 119, 7, 213, 57, 100, 216, 148, 22, 182, 71, 84, 203, 194, 108, 166, 224, 50, 39, 163, 103, 81, 156, 118, 221, 59, 217, 162, 107, 67, 95, 181, 196, 72, 89, 187, 35, 175, 197, 162, 138, 223, 66, 231, 182, 25, 89, 210, 110, 75, 95, 212, 82, 163, 219, 241, 95, 171, 245, 47, 127, 151, 202, 227, 153, 187, 208, 122, 157, 173, 85, 171, 253, 210, 53, 71, 60, 244, 39, 249, 180, 157, 183, 223, 155, 147, 33, 61, 201, 62, 147, 90, 250, 117, 51, 252, 202, 172, 194, 253, 84, 181, 205, 232, 119, 109, 135, 143, 77, 237, 169, 149, 243, 104, 188, 146, 74, 85, 131, 50, 153, 87, 232, 133, 223, 188, 57, 222, 154, 166, 85, 75, 198, 32, 67, 163, 137, 244, 156, 101, 74, 187, 201, 59, 71, 109, 119, 43, 25, 194, 164, 166, 119, 216, 138, 158, 197, 41, 61, 173, 178, 152, 238, 233, 74, 244, 69, 205, 157, 85, 127, 54, 198, 116, 57, 70, 13, 11, 159, 165, 115, 124, 85, 60, 77, 125, 87, 127, 39, 209, 41, 59, 213, 181, 149, 86, 205, 91, 157, 161, 51, 73, 79, 149, 21, 49, 230, 119, 227, 167, 219, 98, 179, 134, 112, 169, 29, 215, 101, 167, 204, 57, 85, 110, 187, 85, 49, 139, 145, 175, 119, 243, 246, 53, 164, 140, 154, 175, 66, 59, 200, 24, 131, 106, 208, 98, 132, 206, 95, 57, 253, 13, 185, 219, 178, 151, 218, 169, 100, 140, 111, 61, 179, 158, 243, 222, 103, 233, 234, 110, 219, 249, 182, 253, 73, 181, 63, 169, 109, 165, 79, 71, 189, 134, 209, 34, 95, 123, 159, 110, 172, 81, 178, 49, 26, 53, 239, 131, 236, 232, 162, 101, 80, 107, 230, 49, 74, 213, 224, 31, 178, 237, 111, 83, 52, 106, 188, 186, 24, 43, 85, 1, 19, 228, 225, 209, 104, 70, 67, 68, 131, 213, 198, 127, 131, 7, 68, 35, 32, 138, 91, 16, 213, 239, 104, 60, 120, 68, 40, 136, 176, 32, 141, 3, 16, 15, 136, 143, 184, 240, 12, 136, 66, 194, 196, 34, 198, 43, 253, 168, 22, 162, 37, 186, 100, 136, 171, 102, 110, 213, 150, 242, 103, 116, 71, 235, 119, 165, 50, 253, 72, 145, 101, 95, 50, 149, 70, 205, 20, 126, 59, 232, 219, 172, 162, 231, 205, 113, 60, 170, 91, 245, 26, 90, 151, 204, 236, 171, 229, 27, 53, 245, 165, 15, 226, 101, 20, 185, 20, 149, 122, 29, 125, 180, 47, 101, 237, 89, 213, 212, 249, 45, 47, 183, 207, 34, 213, 53, 71, 229, 23, 118, 179, 103, 153, 221, 182, 86, 170, 189, 243, 154, 50, 105, 241, 33, 77, 229, 163, 169, 78, 178, 170, 39, 83, 71, 108, 234, 169, 134, 124, 37, 211, 163, 20, 167, 65, 213, 197, 242, 88, 248, 176, 167, 37, 94, 107, 123, 90, 45, 58, 32, 160, 227, 20, 50, 140, 1, 60, 153, 8, 22, 134, 41, 191, 16, 102, 43, 100, 120, 152, 70, 160, 78, 132, 167, 130, 106, 122, 158, 94, 234, 244, 184, 20, 51, 167, 199, 83, 204, 52, 61, 158, 226, 229, 244, 186, 20, 51, 167, 199, 83, 156, 126, 38, 9, 26, 2, 79, 27, 115, 34, 124, 42, 168, 211, 243, 244, 82, 79, 207, 211, 59, 157, 190, 79, 47, 117, 122, 158, 94, 234, 233, 121, 122, 169, 211, 243, 233, 165, 78, 207, 211, 75, 61, 61, 79, 47, 117, 122, 124, 138, 153, 211, 243, 244, 82, 79, 207, 211, 75, 157, 158, 79, 239, 116, 250, 158, 94, 234, 233, 121, 122, 169, 104, 122, 154, 96, 167, 50, 153, 100, 152, 107, 111, 164, 26, 81, 121, 13, 205, 12
+}
 
 --==================================================
 -- AREA WHITELIST
@@ -139,8 +147,10 @@ local MacroState = {
 	running = false,
 	sessionId = 0,
 	targetName = "skoeow",
+	minYen = "1000",
 	keybind = "190",
-	delay = "1"
+	delay = "1",
+	lastTriggerClock = 0
 }
 
 local HopState = {
@@ -162,6 +172,7 @@ local ChatBox
 local SendChatButton
 local ChatStatus
 local MacroTargetBox
+local MacroMinYenBox
 local MacroToggleButton
 local MacroKeybindBox
 local MacroDelayBox
@@ -198,7 +209,7 @@ local function normalizeText(text)
 		"get a picture of ", "take a picture of ", "take picture of ", "picture of "
 	}
 	for _, prefix in ipairs(prefixes) do
-		if text:sub(1, #prefix) == prefix then
+		if lower:sub(1, #prefix) == prefix then
 			text = text:sub(#prefix + 1)
 			break
 		end
@@ -1152,21 +1163,124 @@ stopFarmingFromGUI = function()
 end
 
 --==================================================
+-- YEN BALANCE DETECTION & MACRO TRIGGER
+--==================================================
+local function parseNumericYen(raw)
+	if type(raw) == "number" then
+		return raw
+	end
+	if type(raw) == "string" then
+		local cleaned = raw:gsub("[^%d%-%.]", "")
+		return tonumber(cleaned)
+	end
+	return nil
+end
+
+local function isYenValueName(name)
+	local lower = tostring(name or ""):lower()
+	for _, candidate in ipairs(YEN_VALUE_NAMES) do
+		if lower == candidate or lower:find(candidate, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+local function getPlayerYen()
+	-- 1. Cek leaderstats & value objects pada LocalPlayer
+	local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
+	if leaderstats then
+		for _, child in ipairs(leaderstats:GetChildren()) do
+			if (child:IsA("IntValue") or child:IsA("NumberValue")) and isYenValueName(child.Name) then
+				local val = tonumber(child.Value)
+				if val then return val end
+			end
+		end
+	end
+
+	for _, child in ipairs(LocalPlayer:GetChildren()) do
+		if (child:IsA("IntValue") or child:IsA("NumberValue")) and isYenValueName(child.Name) then
+			local val = tonumber(child.Value)
+			if val then return val end
+		end
+	end
+
+	-- 2. Cek atribut pada LocalPlayer
+	for _, key in ipairs(YEN_VALUE_NAMES) do
+		local attr = LocalPlayer:GetAttribute(key)
+		local num = parseNumericYen(attr)
+		if num then return num end
+	end
+
+	-- 3. Cek label UI di PlayerGui yang menampilkan Yen / ¥
+	local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+	if playerGui then
+		for _, obj in ipairs(playerGui:GetDescendants()) do
+			if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+				local lowerName = tostring(obj.Name):lower()
+				local txt = tostring(obj.Text or "")
+				if isYenValueName(lowerName) or txt:find("¥", 1, true) or txt:lower():find("yen", 1, true) then
+					local num = parseNumericYen(txt)
+					if num then return num end
+				end
+			end
+		end
+	end
+
+	return nil
+end
+
+local function getMinYenThreshold()
+	local raw = MacroMinYenBox and MacroMinYenBox.Text or MacroState.minYen
+	local val = parseNumericYen(raw)
+	if not val or val < 0 then
+		return 1000
+	end
+	return val
+end
+
+local function fireYenAppActivityStateEvent()
+	local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
+	local event = remotesFolder and remotesFolder:FindFirstChild("YenAppActivityState")
+	if event and firesignal then
+		local ok = pcall(function()
+			firesignal(
+				event.OnClientEvent,
+				(function(bytes)
+					local b = buffer.create(#bytes)
+					for i = 1, #bytes do
+						buffer.writeu8(b, i - 1, bytes[i])
+					end
+					return b
+				end)(YEN_APP_BYTES)
+			)
+		end)
+		return ok
+	end
+	return false
+end
+
+--==================================================
 -- AUTO MACRO CORE & SAVE/LOAD
 --==================================================
 saveMacroConfig = function()
 	local targetText = MacroTargetBox and normalizePlayerName(MacroTargetBox.Text) or MacroState.targetName
+	local minYenText = MacroMinYenBox and tostring(MacroMinYenBox.Text) or MacroState.minYen
 	local keyText = MacroKeybindBox and tostring(MacroKeybindBox.Text) or MacroState.keybind
 	local delayText = MacroDelayBox and tostring(MacroDelayBox.Text) or MacroState.delay
 	if targetText == "" then targetText = "skoeow" end
+	if minYenText == "" then minYenText = "1000" end
 	if keyText == "" then keyText = "190" end
 	if delayText == "" then delayText = "1" end
+
 	MacroState.targetName = targetText
+	MacroState.minYen = minYenText
 	MacroState.keybind = keyText
 	MacroState.delay = delayText
 
 	local payload = {
 		targetName = targetText,
+		minYen = minYenText,
 		keybind = keyText,
 		delay = delayText
 	}
@@ -1199,6 +1313,9 @@ loadMacroConfig = function()
 		if loaded.targetName ~= nil and normalizePlayerName(loaded.targetName) ~= "" then
 			MacroState.targetName = normalizePlayerName(loaded.targetName)
 		end
+		if loaded.minYen ~= nil and tostring(loaded.minYen) ~= "" then
+			MacroState.minYen = tostring(loaded.minYen)
+		end
 		if loaded.keybind ~= nil and tostring(loaded.keybind) ~= "" then
 			MacroState.keybind = tostring(loaded.keybind)
 		end
@@ -1208,6 +1325,9 @@ loadMacroConfig = function()
 	end
 	if MacroTargetBox then
 		MacroTargetBox.Text = MacroState.targetName
+	end
+	if MacroMinYenBox then
+		MacroMinYenBox.Text = MacroState.minYen
 	end
 	if MacroKeybindBox then
 		MacroKeybindBox.Text = MacroState.keybind
@@ -1268,6 +1388,7 @@ local function findActiveGameTextBox()
 	if GuiService.SelectedObject and GuiService.SelectedObject:IsA("TextBox")
 		and GuiService.SelectedObject ~= ChatBox
 		and GuiService.SelectedObject ~= MacroTargetBox
+		and GuiService.SelectedObject ~= MacroMinYenBox
 		and GuiService.SelectedObject ~= MacroKeybindBox
 		and GuiService.SelectedObject ~= MacroDelayBox then
 		return GuiService.SelectedObject
@@ -1278,6 +1399,7 @@ local function findActiveGameTextBox()
 			if obj:IsA("TextBox")
 				and obj ~= ChatBox
 				and obj ~= MacroTargetBox
+				and obj ~= MacroMinYenBox
 				and obj ~= MacroKeybindBox
 				and obj ~= MacroDelayBox
 				and obj:IsFocused() then
@@ -1329,18 +1451,14 @@ local function macroWaitDelay(seconds, sessionId)
 	end
 end
 
--- Membentuk array byte BLINK_RELIABLE_REMOTE secara dinamis berdasarkan nama target Yen
 local function buildBlinkBytes(targetName)
 	targetName = normalizePlayerName(targetName)
 	if targetName == "" then
 		targetName = "skoeow"
 	end
-	-- Batasi panjang maksimal 255 byte (u8 length)
 	if #targetName > 255 then
 		targetName = targetName:sub(1, 255)
 	end
-
-	-- Header tetap: { 59, 1, 0, 1, 0, <panjang_nama>, 0 } diikuti byte ASCII nama target
 	local bytes = { 59, 1, 0, 1, 0, #targetName, 0 }
 	for i = 1, #targetName do
 		table.insert(bytes, string.byte(targetName, i))
@@ -1383,9 +1501,17 @@ local function executeMacroCycle(sessionId)
 	end
 
 	if MacroTargetBox then MacroTargetBox:ReleaseFocus() end
+	if MacroMinYenBox then MacroMinYenBox:ReleaseFocus() end
 	if MacroKeybindBox then MacroKeybindBox:ReleaseFocus() end
 	if MacroDelayBox then MacroDelayBox:ReleaseFocus() end
 	if ChatBox then ChatBox:ReleaseFocus() end
+
+	-- Trigger YenAppActivityState buffer saat macro dijalankan
+	local yenAppFired = fireYenAppActivityStateEvent()
+	if not yenAppFired then
+		setChatStatus("YENAPPACTIVITYSTATE / FIRESIGNAL FAIL", false)
+	end
+	if not MacroState.running or MacroState.sessionId ~= sessionId then return end
 
 	-- 1. Klik ALT lalu tunggu 1 detik
 	macroPressKey(Enum.KeyCode.LeftAlt)
@@ -1441,9 +1567,23 @@ startAutoMacro = function()
 	end
 	task.spawn(function()
 		while MacroState.running and MacroState.sessionId == sessionId do
-			pcall(executeMacroCycle, sessionId)
-			if not MacroState.running or MacroState.sessionId ~= sessionId then break end
-			macroWaitDelay(getMacroDelay(), sessionId)
+			local minYen = getMinYenThreshold()
+			local currentYen = getPlayerYen()
+			local canRun = true
+			if currentYen ~= nil then
+				canRun = currentYen >= minYen
+			end
+
+			if canRun then
+				MacroState.lastTriggerClock = os.clock()
+				setChatStatus("YEN " .. tostring(currentYen or "N/A") .. " >= " .. tostring(minYen) .. " -> MACRO RUN", true)
+				pcall(executeMacroCycle, sessionId)
+				if not MacroState.running or MacroState.sessionId ~= sessionId then break end
+				macroWaitDelay(getMacroDelay(), sessionId)
+			else
+				setChatStatus("TUNGGU YEN >= " .. tostring(minYen) .. " (SAAT INI: " .. tostring(currentYen) .. ")", nil)
+				macroWaitDelay(0.25, sessionId)
+			end
 		end
 		if MacroState.sessionId == sessionId then
 			MacroState.running = false
@@ -1604,7 +1744,7 @@ local function createGUI()
 	ScreenGui.Parent = PlayerGui
 
 	MainFrame = Instance.new("Frame")
-	MainFrame.Size = UDim2.new(0, 280, 0, 272)
+	MainFrame.Size = UDim2.new(0, 280, 0, 308)
 	MainFrame.Position = UDim2.new(0.5, -140, 0, 90)
 	MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 	MainFrame.BorderSizePixel = 0
@@ -1714,12 +1854,12 @@ local function createGUI()
 	sendCorner.CornerRadius = UDim.new(0, 7)
 	sendCorner.Parent = SendChatButton
 
-	-- Bagian Auto Macro + Custom Nama Yen + Server Hop 1-2P
+	-- Bagian Auto Macro + Min Yen + Custom Nama Yen + Server Hop 1-2P
 	local MacroLabel = Instance.new("TextLabel")
 	MacroLabel.Size = UDim2.new(1, -20, 0, 18)
 	MacroLabel.Position = UDim2.new(0, 10, 0, 134)
 	MacroLabel.BackgroundTransparency = 1
-	MacroLabel.Text = "AUTO MACRO (NAMA YEN / KEY / DELAY)"
+	MacroLabel.Text = "AUTO MACRO (YEN TRIGGER / TARGET / KEY)"
 	MacroLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
 	MacroLabel.TextSize = 11
 	MacroLabel.Font = Enum.Font.GothamBold
@@ -1727,13 +1867,13 @@ local function createGUI()
 	MacroLabel.Parent = MainFrame
 
 	MacroTargetBox = Instance.new("TextBox")
-	MacroTargetBox.Size = UDim2.new(1, -20, 0, 30)
+	MacroTargetBox.Size = UDim2.new(0, 152, 0, 30)
 	MacroTargetBox.Position = UDim2.new(0, 10, 0, 155)
 	MacroTargetBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 	MacroTargetBox.BorderSizePixel = 0
 	MacroTargetBox.ClearTextOnFocus = false
 	MacroTargetBox.MultiLine = false
-	MacroTargetBox.PlaceholderText = "Nama Target Send Yen (cth: skoeow)"
+	MacroTargetBox.PlaceholderText = "Target Yen (cth: skoeow)"
 	MacroTargetBox.PlaceholderColor3 = Color3.fromRGB(130, 130, 130)
 	MacroTargetBox.Text = MacroState.targetName
 	MacroTargetBox.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1744,6 +1884,25 @@ local function createGUI()
 	local targetCorner = Instance.new("UICorner")
 	targetCorner.CornerRadius = UDim.new(0, 7)
 	targetCorner.Parent = MacroTargetBox
+
+	MacroMinYenBox = Instance.new("TextBox")
+	MacroMinYenBox.Size = UDim2.new(0, 102, 0, 30)
+	MacroMinYenBox.Position = UDim2.new(1, -112, 0, 155)
+	MacroMinYenBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	MacroMinYenBox.BorderSizePixel = 0
+	MacroMinYenBox.ClearTextOnFocus = false
+	MacroMinYenBox.MultiLine = false
+	MacroMinYenBox.PlaceholderText = "Min Yen (1000)"
+	MacroMinYenBox.PlaceholderColor3 = Color3.fromRGB(130, 130, 130)
+	MacroMinYenBox.Text = MacroState.minYen
+	MacroMinYenBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+	MacroMinYenBox.TextSize = 12
+	MacroMinYenBox.Font = Enum.Font.GothamBold
+	MacroMinYenBox.Parent = MainFrame
+
+	local minYenCorner = Instance.new("UICorner")
+	minYenCorner.CornerRadius = UDim.new(0, 7)
+	minYenCorner.Parent = MacroMinYenBox
 
 	MacroKeybindBox = Instance.new("TextBox")
 	MacroKeybindBox.Size = UDim2.new(0, 62, 0, 30)
@@ -1815,7 +1974,7 @@ local function createGUI()
 
 	ChatStatus = Instance.new("TextLabel")
 	ChatStatus.Size = UDim2.new(1, -20, 0, 20)
-	ChatStatus.Position = UDim2.new(0, 10, 0, 244)
+	ChatStatus.Position = UDim2.new(0, 10, 0, 280)
 	ChatStatus.BackgroundTransparency = 1
 	ChatStatus.Text = ""
 	ChatStatus.TextColor3 = Color3.fromRGB(180, 180, 180)
@@ -1900,6 +2059,11 @@ local function createGUI()
 		setChatStatus("YEN TARGET: " .. MacroState.targetName, true)
 	end)
 
+	MacroMinYenBox.FocusLost:Connect(function()
+		saveMacroConfig()
+		setChatStatus("MIN YEN SAVED: " .. MacroState.minYen, true)
+	end)
+
 	MacroKeybindBox.FocusLost:Connect(function()
 		saveMacroConfig()
 		setChatStatus("MACRO SAVED: " .. MacroState.targetName .. " | " .. MacroState.keybind .. " (" .. MacroState.delay .. "s)", true)
@@ -1916,7 +2080,7 @@ local function createGUI()
 			setChatStatus("MACRO OFF", nil)
 		else
 			startAutoMacro()
-			setChatStatus("MACRO ON -> " .. MacroState.targetName .. " (" .. MacroState.keybind .. ")", true)
+			setChatStatus("MACRO ON (MIN YEN " .. MacroState.minYen .. ")", true)
 		end
 	end)
 
@@ -2019,6 +2183,14 @@ _G.SetMacroTarget = function(name)
 	saveMacroConfig()
 	return true
 end
+_G.SetMacroMinYen = function(amount)
+	local num = parseNumericYen(amount)
+	if not num or num < 0 then return false end
+	MacroState.minYen = tostring(num)
+	if MacroMinYenBox then MacroMinYenBox.Text = MacroState.minYen end
+	saveMacroConfig()
+	return true
+end
 _G.HopServer1To2 = function() hopToLowPlayerServer() end
 _G.SetPlayerView = function(enabled)
 	S.PlayerViewEnabled = enabled == true
@@ -2068,6 +2240,8 @@ _G.GetStatus = function()
 		farming = State.farming,
 		macroRunning = MacroState.running,
 		macroTarget = MacroState.targetName,
+		macroMinYen = MacroState.minYen,
+		currentYen = getPlayerYen(),
 		macroKeybind = MacroState.keybind,
 		macroDelay = MacroState.delay,
 		hopSearching = HopState.searching,
@@ -2099,6 +2273,8 @@ _G.PhotoFarmStatus = function()
 	print("Farming:", State.farming)
 	print("Macro Running:", MacroState.running)
 	print("Macro Target:", MacroState.targetName)
+	print("Min Yen:", MacroState.minYen)
+	print("Current Yen:", getPlayerYen())
 	print("Macro Keybind:", MacroState.keybind)
 	print("Macro Delay:", MacroState.delay)
 	print("Hop Searching:", HopState.searching)
