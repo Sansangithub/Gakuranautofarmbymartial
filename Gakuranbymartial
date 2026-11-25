@@ -3,7 +3,7 @@
 --// MOBILE CHAT + AUTO ;VIEW COMMAND
 --// NO AUTO SPECTATE WHILE FARMING
 --// WHITELIST AREA ONLY
---// MERGED: AUTO MACRO (ALT + BLINK_RELIABLE_REMOTE + KEYBIND + AUTO SAVE/LOAD) + HOP 1-2P SERVER
+--// MERGED: AUTO MACRO (CUSTOM YEN TARGET + ALT + BLINK_RELIABLE_REMOTE + KEYBIND + AUTO SAVE/LOAD) + HOP 1-2P SERVER
 
 --==================================================
 -- SERVICES
@@ -138,6 +138,7 @@ local currentTween = nil
 local MacroState = {
 	running = false,
 	sessionId = 0,
+	targetName = "skoeow",
 	keybind = "190",
 	delay = "1"
 }
@@ -160,6 +161,7 @@ local StatusLabel
 local ChatBox
 local SendChatButton
 local ChatStatus
+local MacroTargetBox
 local MacroToggleButton
 local MacroKeybindBox
 local MacroDelayBox
@@ -1153,14 +1155,18 @@ end
 -- AUTO MACRO CORE & SAVE/LOAD
 --==================================================
 saveMacroConfig = function()
+	local targetText = MacroTargetBox and normalizePlayerName(MacroTargetBox.Text) or MacroState.targetName
 	local keyText = MacroKeybindBox and tostring(MacroKeybindBox.Text) or MacroState.keybind
 	local delayText = MacroDelayBox and tostring(MacroDelayBox.Text) or MacroState.delay
+	if targetText == "" then targetText = "skoeow" end
 	if keyText == "" then keyText = "190" end
 	if delayText == "" then delayText = "1" end
+	MacroState.targetName = targetText
 	MacroState.keybind = keyText
 	MacroState.delay = delayText
 
 	local payload = {
+		targetName = targetText,
 		keybind = keyText,
 		delay = delayText
 	}
@@ -1190,12 +1196,18 @@ loadMacroConfig = function()
 		loaded = macroEnv._PhotoFarmAutoMacroConfig
 	end
 	if loaded then
+		if loaded.targetName ~= nil and normalizePlayerName(loaded.targetName) ~= "" then
+			MacroState.targetName = normalizePlayerName(loaded.targetName)
+		end
 		if loaded.keybind ~= nil and tostring(loaded.keybind) ~= "" then
 			MacroState.keybind = tostring(loaded.keybind)
 		end
 		if loaded.delay ~= nil and tostring(loaded.delay) ~= "" then
 			MacroState.delay = tostring(loaded.delay)
 		end
+	end
+	if MacroTargetBox then
+		MacroTargetBox.Text = MacroState.targetName
 	end
 	if MacroKeybindBox then
 		MacroKeybindBox.Text = MacroState.keybind
@@ -1255,6 +1267,7 @@ end
 local function findActiveGameTextBox()
 	if GuiService.SelectedObject and GuiService.SelectedObject:IsA("TextBox")
 		and GuiService.SelectedObject ~= ChatBox
+		and GuiService.SelectedObject ~= MacroTargetBox
 		and GuiService.SelectedObject ~= MacroKeybindBox
 		and GuiService.SelectedObject ~= MacroDelayBox then
 		return GuiService.SelectedObject
@@ -1264,6 +1277,7 @@ local function findActiveGameTextBox()
 		for _, obj in ipairs(playerGui:GetDescendants()) do
 			if obj:IsA("TextBox")
 				and obj ~= ChatBox
+				and obj ~= MacroTargetBox
 				and obj ~= MacroKeybindBox
 				and obj ~= MacroDelayBox
 				and obj:IsFocused() then
@@ -1315,9 +1329,29 @@ local function macroWaitDelay(seconds, sessionId)
 	end
 end
 
-local function fireBlinkReliableRemote()
+-- Membentuk array byte BLINK_RELIABLE_REMOTE secara dinamis berdasarkan nama target Yen
+local function buildBlinkBytes(targetName)
+	targetName = normalizePlayerName(targetName)
+	if targetName == "" then
+		targetName = "skoeow"
+	end
+	-- Batasi panjang maksimal 255 byte (u8 length)
+	if #targetName > 255 then
+		targetName = targetName:sub(1, 255)
+	end
+
+	-- Header tetap: { 59, 1, 0, 1, 0, <panjang_nama>, 0 } diikuti byte ASCII nama target
+	local bytes = { 59, 1, 0, 1, 0, #targetName, 0 }
+	for i = 1, #targetName do
+		table.insert(bytes, string.byte(targetName, i))
+	end
+	return bytes
+end
+
+local function fireBlinkReliableRemote(targetName)
 	local event = ReplicatedStorage:FindFirstChild("BLINK_RELIABLE_REMOTE")
 	if event and firesignal then
+		local payloadBytes = buildBlinkBytes(targetName)
 		local ok = pcall(function()
 			firesignal(
 				event.OnClientEvent,
@@ -1327,7 +1361,7 @@ local function fireBlinkReliableRemote()
 						buffer.writeu8(b, i - 1, bytes[i])
 					end
 					return b
-				end)({ 59, 1, 0, 1, 0, 6, 0, 115, 107, 111, 101, 111, 119 }),
+				end)(payloadBytes),
 				{}
 			)
 		end)
@@ -1337,12 +1371,18 @@ local function fireBlinkReliableRemote()
 end
 
 local function executeMacroCycle(sessionId)
+	local targetText = MacroTargetBox and normalizePlayerName(MacroTargetBox.Text) or MacroState.targetName
 	local keyText = MacroKeybindBox and tostring(MacroKeybindBox.Text) or MacroState.keybind
+	if targetText == "" then
+		setChatStatus("NAMA YEN KOSONG", false)
+		return
+	end
 	if keyText == "" then
 		setChatStatus("MACRO KEYBIND EMPTY", false)
 		return
 	end
 
+	if MacroTargetBox then MacroTargetBox:ReleaseFocus() end
 	if MacroKeybindBox then MacroKeybindBox:ReleaseFocus() end
 	if MacroDelayBox then MacroDelayBox:ReleaseFocus() end
 	if ChatBox then ChatBox:ReleaseFocus() end
@@ -1353,8 +1393,8 @@ local function executeMacroCycle(sessionId)
 	task.wait(1)
 	if not MacroState.running or MacroState.sessionId ~= sessionId then return end
 
-	-- 2. Jalankan BLINK_RELIABLE_REMOTE
-	local fired = fireBlinkReliableRemote()
+	-- 2. Jalankan BLINK_RELIABLE_REMOTE dengan nama target Yen yang diatur di menu
+	local fired = fireBlinkReliableRemote(targetText)
 	if not fired then
 		setChatStatus("BLINK REMOTE / FIRESIGNAL FAIL", false)
 	end
@@ -1674,21 +1714,40 @@ local function createGUI()
 	sendCorner.CornerRadius = UDim.new(0, 7)
 	sendCorner.Parent = SendChatButton
 
-	-- Bagian Auto Macro + Server Hop 1-2P
+	-- Bagian Auto Macro + Custom Nama Yen + Server Hop 1-2P
 	local MacroLabel = Instance.new("TextLabel")
 	MacroLabel.Size = UDim2.new(1, -20, 0, 18)
 	MacroLabel.Position = UDim2.new(0, 10, 0, 134)
 	MacroLabel.BackgroundTransparency = 1
-	MacroLabel.Text = "AUTO MACRO / HOP 1-2P"
+	MacroLabel.Text = "AUTO MACRO (NAMA YEN / KEY / DELAY)"
 	MacroLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
 	MacroLabel.TextSize = 11
 	MacroLabel.Font = Enum.Font.GothamBold
 	MacroLabel.TextXAlignment = Enum.TextXAlignment.Left
 	MacroLabel.Parent = MainFrame
 
+	MacroTargetBox = Instance.new("TextBox")
+	MacroTargetBox.Size = UDim2.new(1, -20, 0, 30)
+	MacroTargetBox.Position = UDim2.new(0, 10, 0, 155)
+	MacroTargetBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	MacroTargetBox.BorderSizePixel = 0
+	MacroTargetBox.ClearTextOnFocus = false
+	MacroTargetBox.MultiLine = false
+	MacroTargetBox.PlaceholderText = "Nama Target Send Yen (cth: skoeow)"
+	MacroTargetBox.PlaceholderColor3 = Color3.fromRGB(130, 130, 130)
+	MacroTargetBox.Text = MacroState.targetName
+	MacroTargetBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+	MacroTargetBox.TextSize = 12
+	MacroTargetBox.Font = Enum.Font.GothamBold
+	MacroTargetBox.Parent = MainFrame
+
+	local targetCorner = Instance.new("UICorner")
+	targetCorner.CornerRadius = UDim.new(0, 7)
+	targetCorner.Parent = MacroTargetBox
+
 	MacroKeybindBox = Instance.new("TextBox")
 	MacroKeybindBox.Size = UDim2.new(0, 62, 0, 30)
-	MacroKeybindBox.Position = UDim2.new(0, 10, 0, 155)
+	MacroKeybindBox.Position = UDim2.new(0, 10, 0, 191)
 	MacroKeybindBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 	MacroKeybindBox.BorderSizePixel = 0
 	MacroKeybindBox.ClearTextOnFocus = false
@@ -1707,7 +1766,7 @@ local function createGUI()
 
 	MacroDelayBox = Instance.new("TextBox")
 	MacroDelayBox.Size = UDim2.new(0, 48, 0, 30)
-	MacroDelayBox.Position = UDim2.new(0, 76, 0, 155)
+	MacroDelayBox.Position = UDim2.new(0, 76, 0, 191)
 	MacroDelayBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 	MacroDelayBox.BorderSizePixel = 0
 	MacroDelayBox.ClearTextOnFocus = false
@@ -1726,7 +1785,7 @@ local function createGUI()
 
 	MacroToggleButton = Instance.new("TextButton")
 	MacroToggleButton.Size = UDim2.new(0, 72, 0, 30)
-	MacroToggleButton.Position = UDim2.new(0, 128, 0, 155)
+	MacroToggleButton.Position = UDim2.new(0, 128, 0, 191)
 	MacroToggleButton.BackgroundColor3 = Color3.fromRGB(170, 45, 45)
 	MacroToggleButton.BorderSizePixel = 0
 	MacroToggleButton.Text = "MACRO OFF"
@@ -1741,7 +1800,7 @@ local function createGUI()
 
 	HopServerButton = Instance.new("TextButton")
 	HopServerButton.Size = UDim2.new(0, 66, 0, 30)
-	HopServerButton.Position = UDim2.new(1, -76, 0, 155)
+	HopServerButton.Position = UDim2.new(1, -76, 0, 191)
 	HopServerButton.BackgroundColor3 = Color3.fromRGB(55, 120, 200)
 	HopServerButton.BorderSizePixel = 0
 	HopServerButton.Text = "HOP 1-2P"
@@ -1836,14 +1895,19 @@ local function createGUI()
 		end
 	end)
 
+	MacroTargetBox.FocusLost:Connect(function()
+		saveMacroConfig()
+		setChatStatus("YEN TARGET: " .. MacroState.targetName, true)
+	end)
+
 	MacroKeybindBox.FocusLost:Connect(function()
 		saveMacroConfig()
-		setChatStatus("MACRO SAVED: " .. MacroState.keybind .. " (DELAY " .. MacroState.delay .. "s)", true)
+		setChatStatus("MACRO SAVED: " .. MacroState.targetName .. " | " .. MacroState.keybind .. " (" .. MacroState.delay .. "s)", true)
 	end)
 
 	MacroDelayBox.FocusLost:Connect(function()
 		saveMacroConfig()
-		setChatStatus("MACRO SAVED: " .. MacroState.keybind .. " (DELAY " .. MacroState.delay .. "s)", true)
+		setChatStatus("MACRO SAVED: " .. MacroState.targetName .. " | " .. MacroState.keybind .. " (" .. MacroState.delay .. "s)", true)
 	end)
 
 	MacroToggleButton.Activated:Connect(function()
@@ -1852,7 +1916,7 @@ local function createGUI()
 			setChatStatus("MACRO OFF", nil)
 		else
 			startAutoMacro()
-			setChatStatus("MACRO ON (" .. MacroState.keybind .. ")", true)
+			setChatStatus("MACRO ON -> " .. MacroState.targetName .. " (" .. MacroState.keybind .. ")", true)
 		end
 	end)
 
@@ -1947,6 +2011,14 @@ _G.StartFarming = function() startFarming() end
 _G.StopFarming = function() stopFarmingFromGUI() end
 _G.StartMacro = function() startAutoMacro() end
 _G.StopMacro = function() stopAutoMacro() end
+_G.SetMacroTarget = function(name)
+	name = normalizePlayerName(name)
+	if name == "" then return false end
+	MacroState.targetName = name
+	if MacroTargetBox then MacroTargetBox.Text = name end
+	saveMacroConfig()
+	return true
+end
 _G.HopServer1To2 = function() hopToLowPlayerServer() end
 _G.SetPlayerView = function(enabled)
 	S.PlayerViewEnabled = enabled == true
@@ -1995,6 +2067,7 @@ _G.GetStatus = function()
 	return {
 		farming = State.farming,
 		macroRunning = MacroState.running,
+		macroTarget = MacroState.targetName,
 		macroKeybind = MacroState.keybind,
 		macroDelay = MacroState.delay,
 		hopSearching = HopState.searching,
@@ -2025,6 +2098,7 @@ _G.PhotoFarmStatus = function()
 	print("========== PHOTO FARM ==========")
 	print("Farming:", State.farming)
 	print("Macro Running:", MacroState.running)
+	print("Macro Target:", MacroState.targetName)
 	print("Macro Keybind:", MacroState.keybind)
 	print("Macro Delay:", MacroState.delay)
 	print("Hop Searching:", HopState.searching)
