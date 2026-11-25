@@ -3,6 +3,7 @@
 --// MOBILE CHAT + AUTO ;VIEW COMMAND
 --// NO AUTO SPECTATE WHILE FARMING
 --// WHITELIST AREA ONLY
+--// INSTANT STOP -> START ON ANY FAILED PHOTO (PLAYER & AREA)
 --// MERGED: AUTO MACRO (YEN THRESHOLD TRIGGER + YENAPPACTIVITYSTATE + CUSTOM YEN TARGET + KEYBIND + SAVE/LOAD) + HOP 1-2P SERVER
 
 --==================================================
@@ -57,10 +58,10 @@ local Settings = {
 		RooftopTeleportTolerance = 1.0,
 		RooftopPhotoRetryCount = 3,
 		PlayerSafeDistance = 3.5,
-		RestartDelay = 0.025,
+		RestartDelay = 0.015,
 		AssignmentWait = 0.01,
-		StartCooldown = 0.25,
-		PhotoRetryCount = 5,
+		StartCooldown = 0.15,
+		PhotoRetryCount = 3,
 		PhotoRetryDelay = 0.005,
 		PhotoConfirmTimeout = 0.10,
 		SuccessDelay = 0.01,
@@ -118,7 +119,6 @@ local CameraState = {
 local State = {
 	farming = false,
 	processing = false,
-	tweening = false,
 	restarting = false,
 	lastTask = "",
 	taskCount = 0,
@@ -138,7 +138,6 @@ local State = {
 	sessionId = 0,
 	farmLoopRunning = false
 }
-local currentTween = nil
 
 --==================================================
 -- AUTO MACRO & SERVER HOP STATE
@@ -209,7 +208,7 @@ local function normalizeText(text)
 		"get a picture of ", "take a picture of ", "take picture of ", "picture of "
 	}
 	for _, prefix in ipairs(prefixes) do
-		if lower:sub(1, #prefix) == prefix then
+		if text:sub(1, #prefix) == prefix then
 			text = text:sub(#prefix + 1)
 			break
 		end
@@ -377,14 +376,6 @@ local function zeroVelocity()
 	end
 end
 
-local function cancelTween()
-	if currentTween then
-		pcall(function() currentTween:Cancel() end)
-		currentTween = nil
-	end
-	State.tweening = false
-end
-
 local function placeCharacterAt(targetCFrame)
 	if not Character or not Character.Parent or not HRP or not HRP.Parent then return false end
 	if Humanoid and Humanoid.SeatPart then Humanoid.Sit = false end
@@ -397,36 +388,6 @@ local function placeCharacterAt(targetCFrame)
 	RunService.Heartbeat:Wait()
 	zeroVelocity()
 	return ok
-end
-
-local function smoothTween(position)
-	if not HRP or not HRP.Parent or not State.farming then return false end
-	local distance = (position - HRP.Position).Magnitude
-	if distance <= S.MaxDistance then
-		placeCharacterAt(CFrame.new(position))
-		return true
-	end
-	cancelTween()
-	State.tweening = true
-	local duration = math.clamp(distance / S.TweenSpeed, S.MinDuration, S.MaxDuration)
-	currentTween = TweenService:Create(
-		HRP,
-		TweenInfo.new(duration, Enum.EasingStyle.Linear),
-		{ CFrame = CFrame.new(position) }
-	)
-	currentTween:Play()
-	local finished = false
-	local connection = currentTween.Completed:Connect(function()
-		finished = true
-	end)
-	while State.farming and not finished do
-		task.wait()
-	end
-	connection:Disconnect()
-	currentTween = nil
-	State.tweening = false
-	zeroVelocity()
-	return State.farming
 end
 
 --==================================================
@@ -748,45 +709,40 @@ local function forceStartNewJob(sessionId)
 	return pcall(function() photoJobSubmit:InvokeServer("Start") end)
 end
 
-local function restartJobAfterAreaPhotoFailure(sessionId, failedTask)
-	if not isCurrentSession(sessionId) or State.restarting then return false end
+-- Langsung Stop lalu Play (Start) ulang job saat foto gagal terkena
+local function stopAndPlayJobNow(sessionId, failedTask)
+	if not isCurrentSession(sessionId) then return false end
 	State.restarting = true
 	State.processing = false
 	State.lastTask = ""
-	cancelTween()
+	State.targetPlayer = ""
+	State.targetUsername = ""
 	stopPlayerView()
 	zeroVelocity()
+
 	State.lastStartRequest = 0
 	pcall(function()
 		if photoJobSubmit then photoJobSubmit:InvokeServer("Stop") end
 	end)
-	task.wait(S.RestartDelay)
+
+	local waitTime = math.max(0, tonumber(S.RestartDelay) or 0.015)
+	if waitTime > 0 then
+		task.wait(waitTime)
+	end
+
 	if not isCurrentSession(sessionId) then
 		State.restarting = false
 		return false
 	end
-	State.lastStartRequest = 0
-	local started = pcall(function() photoJobSubmit:InvokeServer("Start") end)
-	if not started then
-		State.restarting = false
-		return false
-	end
-	local deadline = os.clock() + 2
-	while isCurrentSession(sessionId) and os.clock() < deadline do
-		local newTask = getTaskText()
-		if newTask and newTask ~= "" then
-			local lower = newTask:lower()
-			if not lower:find("waiting for assignment", 1, true) and newTask ~= failedTask then
-				State.lastTask = ""
-				State.currentPhotoFailure = 0
-				State.restarting = false
-				return true
-			end
-		end
-		task.wait(S.AssignmentWait)
-	end
+
+	State.lastStartRequest = os.clock()
+	local started = pcall(function()
+		if photoJobSubmit then photoJobSubmit:InvokeServer("Start") end
+	end)
+
+	State.restartCount += 1
 	State.restarting = false
-	return false
+	return started
 end
 
 local function waitForNewAssignment()
@@ -883,7 +839,6 @@ end
 local function teleportToPlayer(targetPlayer)
 	if not State.farming or not HRP or not HRP.Parent then return false end
 	if not targetPlayer or not targetPlayer.Parent then return false end
-	cancelTween()
 	zeroVelocity()
 	local safeDistance = math.max(3.0, tonumber(S.PlayerSafeDistance) or 3.5)
 	for _ = 1, S.TeleportRetryCount do
@@ -919,7 +874,6 @@ end
 
 local function teleportToAreaExact(position, customTolerance, customRetries)
 	if not State.farming or not position or not Character or not Character.Parent or not HRP or not HRP.Parent then return false end
-	cancelTween()
 	zeroVelocity()
 	local attempts = math.max(1, tonumber(customRetries or S.AreaTeleportRetryCount) or 8)
 	local tolerance = math.max(0.2, tonumber(customTolerance or S.AreaTeleportTolerance) or 1.25)
@@ -1024,7 +978,6 @@ local function restartUntilValidTask(sessionId)
 	if not isCurrentSession(sessionId) or State.restarting then return false end
 	State.restarting = true
 	stopPlayerView()
-	cancelTween()
 	for _ = 1, 20 do
 		if not isCurrentSession(sessionId) then break end
 		stopCurrentJob()
@@ -1072,8 +1025,8 @@ processTask = function()
 		local success = processAreaTask(taskText)
 		State.processing = false
 		if success then return end
-		State.lastTask = ""
-		restartJobAfterAreaPhotoFailure(State.sessionId, taskText)
+		-- Tidak terkena foto -> langsung Stop lalu Play (Start) lagi
+		stopAndPlayJobNow(State.sessionId, taskText)
 		return
 	end
 	if isPlayerPhotoTask(taskText) then
@@ -1084,8 +1037,8 @@ processTask = function()
 		local success = processPlayerTask(taskText)
 		State.processing = false
 		if success then return end
-		State.lastTask = ""
-		task.wait(S.PhotoRetryDelay)
+		-- Tidak terkena foto -> langsung Stop lalu Play (Start) lagi
+		stopAndPlayJobNow(State.sessionId, taskText)
 		return
 	end
 	State.stopReason = "Invalid task: " .. tostring(taskText)
@@ -1118,7 +1071,6 @@ startFarming = function()
 	local sessionId = State.sessionId
 	State.farming = true
 	State.processing = false
-	State.tweening = false
 	State.restarting = false
 	State.lastTask = ""
 	State.taskCount = 0
@@ -1134,7 +1086,6 @@ startFarming = function()
 	State.lastViewTarget = ""
 	State.lastViewCommand = ""
 	stopPlayerView()
-	cancelTween()
 	zeroVelocity()
 	updateGUI()
 	task.spawn(function() forceStartNewJob(sessionId) end)
@@ -1145,10 +1096,8 @@ stopFarmingFromGUI = function()
 	State.sessionId += 1
 	State.farming = false
 	State.processing = false
-	State.tweening = false
 	State.restarting = false
 	stopPlayerView()
-	cancelTween()
 	zeroVelocity()
 	State.targetPlayer = ""
 	State.targetUsername = ""
@@ -1187,7 +1136,6 @@ local function isYenValueName(name)
 end
 
 local function getPlayerYen()
-	-- 1. Cek leaderstats & value objects pada LocalPlayer
 	local leaderstats = LocalPlayer:FindFirstChild("leaderstats")
 	if leaderstats then
 		for _, child in ipairs(leaderstats:GetChildren()) do
@@ -1205,14 +1153,12 @@ local function getPlayerYen()
 		end
 	end
 
-	-- 2. Cek atribut pada LocalPlayer
 	for _, key in ipairs(YEN_VALUE_NAMES) do
 		local attr = LocalPlayer:GetAttribute(key)
 		local num = parseNumericYen(attr)
 		if num then return num end
 	end
 
-	-- 3. Cek label UI di PlayerGui yang menampilkan Yen / ¥
 	local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
 	if playerGui then
 		for _, obj in ipairs(playerGui:GetDescendants()) do
@@ -1506,45 +1452,38 @@ local function executeMacroCycle(sessionId)
 	if MacroDelayBox then MacroDelayBox:ReleaseFocus() end
 	if ChatBox then ChatBox:ReleaseFocus() end
 
-	-- Trigger YenAppActivityState buffer saat macro dijalankan
 	local yenAppFired = fireYenAppActivityStateEvent()
 	if not yenAppFired then
 		setChatStatus("YENAPPACTIVITYSTATE / FIRESIGNAL FAIL", false)
 	end
 	if not MacroState.running or MacroState.sessionId ~= sessionId then return end
 
-	-- 1. Klik ALT lalu tunggu 1 detik
 	macroPressKey(Enum.KeyCode.LeftAlt)
 	if not MacroState.running or MacroState.sessionId ~= sessionId then return end
 	task.wait(1)
 	if not MacroState.running or MacroState.sessionId ~= sessionId then return end
 
-	-- 2. Jalankan BLINK_RELIABLE_REMOTE dengan nama target Yen yang diatur di menu
 	local fired = fireBlinkReliableRemote(targetText)
 	if not fired then
 		setChatStatus("BLINK REMOTE / FIRESIGNAL FAIL", false)
 	end
 	if not MacroState.running or MacroState.sessionId ~= sessionId then return end
 
-	-- 3. Tunggu 1 detik, lalu klik Enter 1x
 	task.wait(1)
 	if not MacroState.running or MacroState.sessionId ~= sessionId then return end
 	macroPressKey(Enum.KeyCode.Return)
 	if not MacroState.running or MacroState.sessionId ~= sessionId then return end
 
-	-- 4. Tunggu 1 detik lagi, baru ketik keybind
 	task.wait(1)
 	if not MacroState.running or MacroState.sessionId ~= sessionId then return end
 	macroTypeString(keyText, sessionId)
 	task.wait(0.15)
 	if not MacroState.running or MacroState.sessionId ~= sessionId then return end
 
-	-- 5. Langsung Enter 1x
 	macroPressKey(Enum.KeyCode.Return)
 	task.wait(0.15)
 	if not MacroState.running or MacroState.sessionId ~= sessionId then return end
 
-	-- 6. Langsung klik ALT lagi
 	macroPressKey(Enum.KeyCode.LeftAlt)
 end
 
@@ -1854,7 +1793,6 @@ local function createGUI()
 	sendCorner.CornerRadius = UDim.new(0, 7)
 	sendCorner.Parent = SendChatButton
 
-	-- Bagian Auto Macro + Min Yen + Custom Nama Yen + Server Hop 1-2P
 	local MacroLabel = Instance.new("TextLabel")
 	MacroLabel.Size = UDim2.new(1, -20, 0, 18)
 	MacroLabel.Position = UDim2.new(0, 10, 0, 134)
@@ -2248,7 +2186,6 @@ _G.GetStatus = function()
 		sessionId = State.sessionId,
 		farmLoopRunning = State.farmLoopRunning,
 		processing = State.processing,
-		tweening = State.tweening,
 		restarting = State.restarting,
 		playerView = CameraState.active,
 		playerViewEnabled = S.PlayerViewEnabled,
