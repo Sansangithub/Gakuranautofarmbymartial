@@ -3,7 +3,7 @@
 --// MOBILE CHAT + AUTO ;VIEW COMMAND
 --// NO AUTO SPECTATE WHILE FARMING
 --// WHITELIST AREA ONLY
---// MERGED: AUTO MACRO (ALT + BLINK_RELIABLE_REMOTE + KEYBIND + AUTO SAVE/LOAD)
+--// MERGED: AUTO MACRO (ALT + BLINK_RELIABLE_REMOTE + KEYBIND + AUTO SAVE/LOAD) + HOP 1-2P SERVER
 
 --==================================================
 -- SERVICES
@@ -18,6 +18,7 @@ local TextChatService = game:GetService("TextChatService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local GuiService = game:GetService("GuiService")
 local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
 
 --==================================================
 -- PLAYER
@@ -132,13 +133,17 @@ local State = {
 local currentTween = nil
 
 --==================================================
--- AUTO MACRO STATE & CONFIG
+-- AUTO MACRO & SERVER HOP STATE
 --==================================================
 local MacroState = {
 	running = false,
 	sessionId = 0,
 	keybind = "190",
 	delay = "1"
+}
+
+local HopState = {
+	searching = false
 }
 
 local MACRO_CONFIG_FILE = "PhotoFarmAutoMacroConfig.json"
@@ -158,6 +163,7 @@ local ChatStatus
 local MacroToggleButton
 local MacroKeybindBox
 local MacroDelayBox
+local HopServerButton
 local startFarming
 local stopFarmingFromGUI
 local startPlayerView
@@ -169,6 +175,7 @@ local saveMacroConfig
 local loadMacroConfig
 local startAutoMacro
 local stopAutoMacro
+local hopToLowPlayerServer
 
 --==================================================
 -- NORMALIZE HELPERS
@@ -1419,6 +1426,130 @@ updateMacroGUI = function()
 end
 
 --==================================================
+-- SERVER HOP (1-2 PLAYERS ONLY)
+--==================================================
+local function fetchServersPage(placeId, cursor)
+	local url = string.format(
+		"https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100%s",
+		placeId,
+		cursor and cursor ~= "" and ("&cursor=" .. HttpService:UrlEncode(cursor)) or ""
+	)
+
+	local rawBody = nil
+	local reqFunc = (typeof(request) == "function" and request)
+		or (typeof(http_request) == "function" and http_request)
+		or (typeof(syn) == "table" and typeof(syn.request) == "function" and syn.request)
+
+	if reqFunc then
+		local ok, res = pcall(reqFunc, { Url = url, Method = "GET" })
+		if ok and type(res) == "table" and type(res.Body) == "string" then
+			rawBody = res.Body
+		end
+	end
+
+	if not rawBody then
+		local ok, body = pcall(function()
+			return game:HttpGet(url)
+		end)
+		if ok and type(body) == "string" then
+			rawBody = body
+		end
+	end
+
+	if not rawBody then
+		return nil
+	end
+
+	local okDecode, decoded = pcall(function()
+		return HttpService:JSONDecode(rawBody)
+	end)
+	if okDecode and type(decoded) == "table" then
+		return decoded
+	end
+	return nil
+end
+
+hopToLowPlayerServer = function()
+	if HopState.searching then return end
+	HopState.searching = true
+	if HopServerButton then
+		HopServerButton.Text = "HOPPING..."
+		HopServerButton.BackgroundColor3 = Color3.fromRGB(200, 140, 35)
+	end
+	setChatStatus("MENCARI SERVER 1-2 PLAYER...", nil)
+
+	task.spawn(function()
+		local placeId = game.PlaceId
+		local currentJobId = tostring(game.JobId)
+		local onePlayerServer = nil
+		local twoPlayerServer = nil
+		local cursor = ""
+		local pagesChecked = 0
+		local maxPages = 8
+
+		while pagesChecked < maxPages do
+			pagesChecked += 1
+			local page = fetchServersPage(placeId, cursor)
+			if not page or type(page.data) ~= "table" then
+				if pagesChecked == 1 then
+					setChatStatus("GAGAL AMBIL LIST SERVER (HTTP)", false)
+					HopState.searching = false
+					if HopServerButton then
+						HopServerButton.Text = "HOP 1-2P"
+						HopServerButton.BackgroundColor3 = Color3.fromRGB(55, 120, 200)
+					end
+					return
+				end
+				break
+			end
+
+			for _, server in ipairs(page.data) do
+				if type(server) == "table" and type(server.id) == "string" and server.id ~= currentJobId then
+					local playing = tonumber(server.playing) or 0
+					local maxPlayers = tonumber(server.maxPlayers) or 999
+					if playing == 1 and playing < maxPlayers and not onePlayerServer then
+						onePlayerServer = server
+						break
+					elseif playing == 2 and playing < maxPlayers and not twoPlayerServer then
+						twoPlayerServer = server
+					end
+				end
+			end
+
+			if onePlayerServer then
+				break
+			end
+
+			cursor = type(page.nextPageCursor) == "string" and page.nextPageCursor or ""
+			if cursor == "" then
+				break
+			end
+			task.wait(0.1)
+		end
+
+		local chosen = onePlayerServer or twoPlayerServer
+		if chosen then
+			local count = tonumber(chosen.playing) or 0
+			setChatStatus("TELEPORT KE SERVER (" .. tostring(count) .. "P)...", true)
+			local ok, err = pcall(function()
+				TeleportService:TeleportToPlaceInstance(placeId, chosen.id, LocalPlayer)
+			end)
+			if not ok then
+				setChatStatus("TELEPORT GAGAL: " .. tostring(err), false)
+			end
+		else
+			setChatStatus("SERVER 1-2 PLAYER TIDAK DITEMUKAN", false)
+		end
+
+		HopState.searching = false
+		if HopServerButton then
+			HopServerButton.Text = "HOP 1-2P"
+			HopServerButton.BackgroundColor3 = Color3.fromRGB(55, 120, 200)
+		end
+	end)
+end
+
+--==================================================
 -- GUI
 --==================================================
 local function createGUI()
@@ -1543,12 +1674,12 @@ local function createGUI()
 	sendCorner.CornerRadius = UDim.new(0, 7)
 	sendCorner.Parent = SendChatButton
 
-	-- Bagian Auto Macro (Keybind + Delay + Toggle)
+	-- Bagian Auto Macro + Server Hop 1-2P
 	local MacroLabel = Instance.new("TextLabel")
 	MacroLabel.Size = UDim2.new(1, -20, 0, 18)
 	MacroLabel.Position = UDim2.new(0, 10, 0, 134)
 	MacroLabel.BackgroundTransparency = 1
-	MacroLabel.Text = "AUTO MACRO (ALT + REMOTE + KEYBIND)"
+	MacroLabel.Text = "AUTO MACRO / HOP 1-2P"
 	MacroLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
 	MacroLabel.TextSize = 11
 	MacroLabel.Font = Enum.Font.GothamBold
@@ -1556,7 +1687,7 @@ local function createGUI()
 	MacroLabel.Parent = MainFrame
 
 	MacroKeybindBox = Instance.new("TextBox")
-	MacroKeybindBox.Size = UDim2.new(0, 82, 0, 30)
+	MacroKeybindBox.Size = UDim2.new(0, 62, 0, 30)
 	MacroKeybindBox.Position = UDim2.new(0, 10, 0, 155)
 	MacroKeybindBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 	MacroKeybindBox.BorderSizePixel = 0
@@ -1575,13 +1706,13 @@ local function createGUI()
 	keyCorner.Parent = MacroKeybindBox
 
 	MacroDelayBox = Instance.new("TextBox")
-	MacroDelayBox.Size = UDim2.new(0, 72, 0, 30)
-	MacroDelayBox.Position = UDim2.new(0, 98, 0, 155)
+	MacroDelayBox.Size = UDim2.new(0, 48, 0, 30)
+	MacroDelayBox.Position = UDim2.new(0, 76, 0, 155)
 	MacroDelayBox.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 	MacroDelayBox.BorderSizePixel = 0
 	MacroDelayBox.ClearTextOnFocus = false
 	MacroDelayBox.MultiLine = false
-	MacroDelayBox.PlaceholderText = "Delay (s)"
+	MacroDelayBox.PlaceholderText = "Delay"
 	MacroDelayBox.PlaceholderColor3 = Color3.fromRGB(130, 130, 130)
 	MacroDelayBox.Text = MacroState.delay
 	MacroDelayBox.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1594,19 +1725,34 @@ local function createGUI()
 	delayCorner.Parent = MacroDelayBox
 
 	MacroToggleButton = Instance.new("TextButton")
-	MacroToggleButton.Size = UDim2.new(0, 90, 0, 30)
-	MacroToggleButton.Position = UDim2.new(1, -100, 0, 155)
+	MacroToggleButton.Size = UDim2.new(0, 72, 0, 30)
+	MacroToggleButton.Position = UDim2.new(0, 128, 0, 155)
 	MacroToggleButton.BackgroundColor3 = Color3.fromRGB(170, 45, 45)
 	MacroToggleButton.BorderSizePixel = 0
 	MacroToggleButton.Text = "MACRO OFF"
 	MacroToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-	MacroToggleButton.TextSize = 12
+	MacroToggleButton.TextSize = 11
 	MacroToggleButton.Font = Enum.Font.GothamBold
 	MacroToggleButton.Parent = MainFrame
 
 	local macroBtnCorner = Instance.new("UICorner")
 	macroBtnCorner.CornerRadius = UDim.new(0, 7)
 	macroBtnCorner.Parent = MacroToggleButton
+
+	HopServerButton = Instance.new("TextButton")
+	HopServerButton.Size = UDim2.new(0, 66, 0, 30)
+	HopServerButton.Position = UDim2.new(1, -76, 0, 155)
+	HopServerButton.BackgroundColor3 = Color3.fromRGB(55, 120, 200)
+	HopServerButton.BorderSizePixel = 0
+	HopServerButton.Text = "HOP 1-2P"
+	HopServerButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	HopServerButton.TextSize = 11
+	HopServerButton.Font = Enum.Font.GothamBold
+	HopServerButton.Parent = MainFrame
+
+	local hopBtnCorner = Instance.new("UICorner")
+	hopBtnCorner.CornerRadius = UDim.new(0, 7)
+	hopBtnCorner.Parent = HopServerButton
 
 	ChatStatus = Instance.new("TextLabel")
 	ChatStatus.Size = UDim2.new(1, -20, 0, 20)
@@ -1710,6 +1856,10 @@ local function createGUI()
 		end
 	end)
 
+	HopServerButton.Activated:Connect(function()
+		hopToLowPlayerServer()
+	end)
+
 	loadMacroConfig()
 	updateMacroGUI()
 end
@@ -1797,6 +1947,7 @@ _G.StartFarming = function() startFarming() end
 _G.StopFarming = function() stopFarmingFromGUI() end
 _G.StartMacro = function() startAutoMacro() end
 _G.StopMacro = function() stopAutoMacro() end
+_G.HopServer1To2 = function() hopToLowPlayerServer() end
 _G.SetPlayerView = function(enabled)
 	S.PlayerViewEnabled = enabled == true
 	if not S.PlayerViewEnabled then stopPlayerView() end
@@ -1846,6 +1997,7 @@ _G.GetStatus = function()
 		macroRunning = MacroState.running,
 		macroKeybind = MacroState.keybind,
 		macroDelay = MacroState.delay,
+		hopSearching = HopState.searching,
 		sessionId = State.sessionId,
 		farmLoopRunning = State.farmLoopRunning,
 		processing = State.processing,
@@ -1875,6 +2027,7 @@ _G.PhotoFarmStatus = function()
 	print("Macro Running:", MacroState.running)
 	print("Macro Keybind:", MacroState.keybind)
 	print("Macro Delay:", MacroState.delay)
+	print("Hop Searching:", HopState.searching)
 	print("Session:", State.sessionId)
 	print("Loop Running:", State.farmLoopRunning)
 	print("Processing:", State.processing)
